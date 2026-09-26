@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcqgen2"
+version = "0.1.0"
+description = "Generate and practice source-grounded medical MCQs from PDF files."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "openai>=2.14.0",
+  "pydantic>=2.10",
+  "reportlab>=4.2",
+  "streamlit>=1.40",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["mcqgen2*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
