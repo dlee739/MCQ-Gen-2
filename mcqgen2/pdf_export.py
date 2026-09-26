@@ -14,7 +14,7 @@ def build_results_pdf(
     *,
     title: str,
     questions: Sequence[Mapping[str, Any]],
-    answers: Mapping[str, str],
+    answers: Mapping[str, Sequence[str]],
     score: int,
     total: int,
     metadata: str = "",
@@ -38,9 +38,9 @@ def build_results_pdf(
 
     for number, question in enumerate(questions, start=1):
         question_id = str(question["id"])
-        selected_id = answers.get(question_id, "")
-        correct_id = str(question["correct_choice_id"])
-        status = "Correct" if selected_id == correct_id else "Incorrect"
+        selected_ids = set(answers.get(question_id, []))
+        correct_ids = {str(value) for value in question["correct_choice_ids"]}
+        status = "Correct" if selected_ids == correct_ids else "Incorrect"
         story.append(
             Paragraph(
                 f"<b>Question {number} ({status})</b><br/>{escape(str(question['stem']))}",
@@ -50,9 +50,9 @@ def build_results_pdf(
         for index, choice in enumerate(question["choices"]):
             display_letter = chr(ord("A") + index)
             markers: list[str] = []
-            if choice["id"] == selected_id:
+            if choice["id"] in selected_ids:
                 markers.append("selected")
-            if choice["id"] == correct_id:
+            if choice["id"] in correct_ids:
                 markers.append("correct")
             suffix = f" ({', '.join(markers)})" if markers else ""
             story.append(

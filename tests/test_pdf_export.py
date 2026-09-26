@@ -14,14 +14,14 @@ def test_results_pdf_is_created() -> None:
                 {"id": "C", "text": "Answer C"},
                 {"id": "D", "text": "Answer D"},
             ],
-            "correct_choice_id": "A",
+            "correct_choice_ids": ["A", "C"],
             "explanation": "Answer A is supported.",
         }
     ]
     result = build_results_pdf(
         title="Test results",
         questions=questions,
-        answers={"q1": "A"},
+        answers={"q1": ["A", "C"]},
         score=1,
         total=1,
         metadata="gpt-6-luna",

@@ -13,15 +13,19 @@ from mcqgen2.config import (
     ALLOWED_MODELS,
     DEFAULT_MODE,
     DEFAULT_MODEL,
+    DEFAULT_QUESTION_TYPE,
     DEFAULT_QUESTION_COUNT,
+    MAX_CUSTOM_INSTRUCTIONS_CHARS,
     MAX_QUESTION_COUNT,
     MIN_QUESTION_COUNT,
     MODE_CONFIGS,
+    QUESTION_TYPE_LABELS,
     load_local_api_key,
 )
 from mcqgen2.generation import (
     GenerationError,
     generate_question_set,
+    normalize_custom_instructions,
     source_sha256,
     validate_pdf,
 )
@@ -41,8 +45,8 @@ st.set_page_config(page_title="MCQ-Gen 2", page_icon="🩺", layout="wide")
 
 
 @st.cache_resource
-def database() -> Database:
-    db = Database(ROOT / "data" / "mcqgen.sqlite3")
+def database(path: str) -> Database:
+    db = Database(Path(path))
     db.initialize()
     return db
 
@@ -89,6 +93,7 @@ def render_quiz(db: Database) -> None:
     index = quiz["index"]
     question = questions[index]
     question_id = question["id"]
+    question_type = question.get("question_type", "mcq")
 
     st.title(quiz["title"])
     st.progress((index + 1) / len(questions))
@@ -101,17 +106,35 @@ def render_quiz(db: Database) -> None:
         for position, choice in enumerate(question["choices"])
     }
     widget_key = f"quiz_{quiz['nonce']}_{question_id}"
-    selected = st.radio(
-        "Choose one answer",
-        options=list(choice_by_id),
-        index=None,
-        key=widget_key,
-        format_func=lambda choice_id: (
-            f"{display_letter[choice_id]}. {choice_by_id[choice_id]}"
-        ),
-    )
-    if selected is not None:
-        quiz["answers"][question_id] = selected
+    existing_answers = quiz["answers"].get(question_id, [])
+    if question_type == "mcq":
+        options = list(choice_by_id)
+        selected = st.radio(
+            "Choose one answer",
+            options=options,
+            index=options.index(existing_answers[0]) if existing_answers else None,
+            key=widget_key,
+            format_func=lambda choice_id: (
+                f"{display_letter[choice_id]}. {choice_by_id[choice_id]}"
+            ),
+        )
+        if selected is not None:
+            quiz["answers"][question_id] = [selected]
+    else:
+        st.caption("Select every answer that applies.")
+        selected_ids: list[str] = []
+        for choice_id in choice_by_id:
+            checked = st.checkbox(
+                f"{display_letter[choice_id]}. {choice_by_id[choice_id]}",
+                value=choice_id in existing_answers,
+                key=f"{widget_key}_{choice_id}",
+            )
+            if checked:
+                selected_ids.append(choice_id)
+        if selected_ids:
+            quiz["answers"][question_id] = selected_ids
+        else:
+            quiz["answers"].pop(question_id, None)
 
     previous_col, next_col, submit_col, cancel_col = st.columns([1, 1, 1.4, 1])
     with previous_col:
@@ -194,9 +217,9 @@ def render_result() -> None:
             st.rerun()
 
     for number, question in enumerate(questions, start=1):
-        selected_id = answers[question["id"]]
-        correct_id = question["correct_choice_id"]
-        correct = selected_id == correct_id
+        selected_ids = set(answers[question["id"]])
+        correct_ids = set(question["correct_choice_ids"])
+        correct = selected_ids == correct_ids
         icon = "✅" if correct else "❌"
         st.markdown(f"### {icon} Question {number}")
         st.markdown(question["stem"])
@@ -204,9 +227,9 @@ def render_result() -> None:
         for position, choice in enumerate(question["choices"]):
             letter = chr(ord("A") + position)
             markers: list[str] = []
-            if choice["id"] == selected_id:
+            if choice["id"] in selected_ids:
                 markers.append("your answer")
-            if choice["id"] == correct_id:
+            if choice["id"] in correct_ids:
                 markers.append("correct")
             marker = f" — **{', '.join(markers)}**" if markers else ""
             st.markdown(f"{letter}. {choice['text']}{marker}")
@@ -239,6 +262,15 @@ def render_generate(db: Database) -> None:
         )
 
     uploaded = st.file_uploader("Source PDF", type=["pdf"], accept_multiple_files=False)
+    question_type = st.segmented_control(
+        "Question type",
+        options=list(QUESTION_TYPE_LABELS),
+        default=DEFAULT_QUESTION_TYPE,
+        required=True,
+        format_func=lambda value: QUESTION_TYPE_LABELS[value],
+        width="stretch",
+        help="MCQ has one correct answer. SATA means Select All That Apply.",
+    )
     left, middle, right = st.columns([1.1, 1.2, 1])
     with left:
         mode = st.selectbox(
@@ -265,6 +297,18 @@ def render_generate(db: Database) -> None:
             step=1,
         )
 
+    custom_instructions = st.text_area(
+        "Question-writing instructions (optional)",
+        max_chars=MAX_CUSTOM_INSTRUCTIONS_CHARS,
+        placeholder=(
+            "Example: Use patient case scenarios and emphasize mechanism-of-action reasoning."
+        ),
+        help=(
+            "These preferences can shape style and emphasis, but cannot change the "
+            "question count, answer format, source-only rule, or output structure."
+        ),
+    )
+
     with st.expander("Compare model pricing"):
         st.dataframe(pricing_rows(), hide_index=True, width="stretch")
         st.caption(
@@ -282,6 +326,7 @@ def render_generate(db: Database) -> None:
         pdf_bytes = uploaded.getvalue()
         try:
             validate_pdf(uploaded.name, pdf_bytes)
+            normalized_instructions = normalize_custom_instructions(custom_instructions)
             with st.spinner("Generating the complete question set…"):
                 result = generate_question_set(
                     client=OpenAI(),
@@ -289,13 +334,17 @@ def render_generate(db: Database) -> None:
                     pdf_bytes=pdf_bytes,
                     model=model,
                     mode=mode,
+                    question_type=question_type,
                     question_count=int(question_count),
+                    custom_instructions=normalized_instructions,
                 )
                 set_id = db.save_question_set(
                     source_filename=Path(uploaded.name).name,
                     source_sha256=source_sha256(pdf_bytes),
                     mode=mode,
                     model=model,
+                    question_type=question_type,
+                    custom_instructions=normalized_instructions,
                     requested_count=int(question_count),
                     result=result,
                 )
@@ -316,8 +365,11 @@ def render_generate(db: Database) -> None:
                     questions=saved["questions"],
                     kind="full",
                     question_set_id=saved["id"],
-                    title=f"{saved['source_filename']} — MCQ Test",
-                    metadata=f"{saved['model']} · {MODE_CONFIGS[saved['mode']].label}",
+                    title=f"{saved['source_filename']} — Practice Test",
+                    metadata=(
+                        f"{saved['model']} · {MODE_CONFIGS[saved['mode']].label} · "
+                        f"{QUESTION_TYPE_LABELS[saved['question_type']]}"
+                    ),
                 )
 
 
@@ -330,7 +382,8 @@ def render_question_sets(db: Database) -> None:
 
     for item in question_sets:
         label = (
-            f"{item['source_filename']} · {item['requested_count']} questions · "
+            f"{item['source_filename']} · {QUESTION_TYPE_LABELS[item['question_type']]} · "
+            f"{item['requested_count']} questions · "
             f"{item['created_at'][:16].replace('T', ' ')} UTC"
         )
         with st.expander(label):
@@ -339,6 +392,14 @@ def render_question_sets(db: Database) -> None:
                 f"**Mode:** {MODE_CONFIGS[item['mode']].label}  |  "
                 f"**Estimated cost:** {money(item['cost']['total_cost'])}"
             )
+            if item["custom_instructions"]:
+                st.markdown("**Question-writing instructions**")
+                st.code(item["custom_instructions"], language=None)
+            if item["question_type"] == "sata":
+                st.caption(
+                    "Target correct-answer counts: "
+                    + ", ".join(str(value) for value in item["sata_correct_counts"])
+                )
             render_usage(item)
             if st.button("Start test", key=f"start_{item['id']}", type="primary"):
                 full = db.get_question_set(item["id"])
@@ -347,8 +408,11 @@ def render_question_sets(db: Database) -> None:
                         questions=full["questions"],
                         kind="full",
                         question_set_id=full["id"],
-                        title=f"{full['source_filename']} — MCQ Test",
-                        metadata=f"{full['model']} · {MODE_CONFIGS[full['mode']].label}",
+                        title=f"{full['source_filename']} — Practice Test",
+                        metadata=(
+                            f"{full['model']} · {MODE_CONFIGS[full['mode']].label} · "
+                            f"{QUESTION_TYPE_LABELS[full['question_type']]}"
+                        ),
                     )
 
 
@@ -372,7 +436,8 @@ def render_incorrect(db: Database) -> None:
         )
 
 
-db = database()
+database_path = os.getenv("MCQGEN_DATABASE_PATH", str(ROOT / "data" / "mcqgen.sqlite3"))
+db = database(database_path)
 st.title("MCQ-Gen 2")
 st.caption("Generate source-grounded medical practice questions from a PDF.")
 

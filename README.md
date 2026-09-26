@@ -5,8 +5,9 @@ A focused local application for generating and practicing medical multiple-choic
 ## What it does
 
 - Sends one complete PDF directly to the OpenAI Responses API—no page chunking or local text extraction.
-- Generates exactly 1–100 four-choice MCQs using Structured Outputs.
+- Generates exactly 1–100 four-choice MCQ or SATA questions using Structured Outputs.
 - Provides High-Volume and High-Quality generation modes.
+- Accepts optional question-writing preferences without exposing structural prompt rules.
 - Supports `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`.
 - Records actual input/output token usage and estimates cost from a dated pricing snapshot.
 - Saves question sets and quiz attempts locally in SQLite.
@@ -40,6 +41,18 @@ Double-click `run_app.bat`, or run:
 ```
 
 Application data is stored in `data/mcqgen.sqlite3`. Uploaded PDFs are sent directly from memory and are not retained locally after generation.
+
+Generation is intentionally one-shot. MCQ-Gen 2 does not extract pages, split PDFs,
+or issue separate batch requests.
+
+## Question types and custom instructions
+
+- **MCQ** questions have exactly one correct answer.
+- **SATA** (Select All That Apply) questions may have one to four correct answers and
+  are graded by exact-set matching.
+- The optional question-writing instruction field can request pedagogical choices such
+  as patient cases or mechanism-focused questions. It cannot change the selected
+  question type, count, four-choice structure, PDF-only grounding, or output schema.
 
 ## Test
 

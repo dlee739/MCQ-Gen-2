@@ -23,7 +23,11 @@ class GeneratedQuestion(BaseModel):
         max_length=4,
         description="Exactly four distinct answer choices with IDs A through D.",
     )
-    correct_choice_id: ChoiceId
+    correct_choice_ids: list[ChoiceId] = Field(
+        min_length=1,
+        max_length=4,
+        description="One or more stable IDs for the correct choices.",
+    )
     explanation: str = Field(
         min_length=1,
         description="Concise justification of the answer and distractors using choice text, not letters.",
@@ -37,18 +41,31 @@ class GeneratedQuestion(BaseModel):
         normalized = [choice.text.casefold() for choice in self.choices]
         if len(set(normalized)) != 4:
             raise ValueError("choice text must be unique")
-        if self.correct_choice_id not in ids:
-            raise ValueError("correct_choice_id must reference a choice")
+        if len(set(self.correct_choice_ids)) != len(self.correct_choice_ids):
+            raise ValueError("correct_choice_ids must be unique")
+        if any(choice_id not in ids for choice_id in self.correct_choice_ids):
+            raise ValueError("correct_choice_ids must reference existing choices")
         return self
 
 
-def question_bank_model(question_count: int) -> type[BaseModel]:
+class MCQGeneratedQuestion(GeneratedQuestion):
+    correct_choice_ids: list[ChoiceId] = Field(
+        min_length=1,
+        max_length=1,
+        description="The single stable ID for the correct choice.",
+    )
+
+
+def question_bank_model(question_count: int, question_type: str) -> type[BaseModel]:
+    if question_type not in {"mcq", "sata"}:
+        raise ValueError(f"Unsupported question type: {question_type}")
+    question_model = MCQGeneratedQuestion if question_type == "mcq" else GeneratedQuestion
     exact_questions = Annotated[
-        list[GeneratedQuestion],
+        list[question_model],  # type: ignore[valid-type]
         Field(min_length=question_count, max_length=question_count),
     ]
     return create_model(
-        f"QuestionBank{question_count}",
+        f"QuestionBank{question_type.upper()}{question_count}",
         __config__=ConfigDict(extra="forbid"),
         questions=(exact_questions, ...),
     )

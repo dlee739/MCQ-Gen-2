@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 GenerationMode = Literal["high_volume", "high_quality"]
+QuestionType = Literal["mcq", "sata"]
 
 
 @dataclass(frozen=True)
@@ -38,11 +39,18 @@ ALLOWED_MODELS = (
 
 DEFAULT_MODEL = "gpt-6-luna"
 DEFAULT_MODE: GenerationMode = "high_volume"
+DEFAULT_QUESTION_TYPE: QuestionType = "mcq"
 DEFAULT_QUESTION_COUNT = 20
 MIN_QUESTION_COUNT = 1
 MAX_QUESTION_COUNT = 100
 MAX_PDF_BYTES = 50 * 1024 * 1024
-PROMPT_VERSION = "mcq-v1"
+MAX_CUSTOM_INSTRUCTIONS_CHARS = 2_000
+PROMPT_VERSION = "mcq-v2"
+
+QUESTION_TYPE_LABELS: dict[QuestionType, str] = {
+    "mcq": "MCQ",
+    "sata": "SATA",
+}
 
 
 def max_output_tokens(question_count: int) -> int:
