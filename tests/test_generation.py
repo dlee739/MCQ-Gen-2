@@ -70,7 +70,7 @@ def test_generation_is_one_full_pdf_request() -> None:
         mode="high_volume",
         question_type="mcq",
         question_count=3,
-        custom_instructions="Use {patient} cases.",
+        custom_instructions="Use {real-world} scenarios.",
     )
 
     assert len(result.questions) == 3
@@ -84,7 +84,10 @@ def test_generation_is_one_full_pdf_request() -> None:
     assert content[0]["detail"] == "auto"
     assert content[0]["file_data"].startswith("data:application/pdf;base64,")
     assert "exactly 3" in content[1]["text"]
-    assert "Use {patient} cases." in content[1]["text"]
+    assert "Use {real-world} scenarios." in content[1]["text"]
+    domain_defaults = ("medi" "cal", "clini" "cal")
+    assert all(term not in request["instructions"].casefold() for term in domain_defaults)
+    assert all(term not in content[1]["text"].casefold() for term in domain_defaults)
     assert result.usage.reasoning_tokens == 300
     assert result.sata_correct_counts == []
 

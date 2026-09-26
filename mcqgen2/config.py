@@ -24,7 +24,7 @@ MODE_CONFIGS: dict[GenerationMode, ModeConfig] = {
     ),
     "high_quality": ModeConfig(
         label="High-Quality",
-        description="More complex clinical reasoning with stronger distractors.",
+        description="More complex application and reasoning with stronger distractors.",
         reasoning_effort="high",
     ),
 }
@@ -45,7 +45,7 @@ MIN_QUESTION_COUNT = 1
 MAX_QUESTION_COUNT = 100
 MAX_PDF_BYTES = 50 * 1024 * 1024
 MAX_CUSTOM_INSTRUCTIONS_CHARS = 2_000
-PROMPT_VERSION = "mcq-v2"
+PROMPT_VERSION = "mcq-v3"
 
 QUESTION_TYPE_LABELS: dict[QuestionType, str] = {
     "mcq": "MCQ",

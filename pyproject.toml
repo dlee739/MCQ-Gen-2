@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mcqgen2"
 version = "0.1.0"
-description = "Generate and practice source-grounded medical MCQs from PDF files."
+description = "Generate and practice source-grounded questions from PDF files."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

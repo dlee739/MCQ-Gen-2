@@ -17,7 +17,7 @@ class Choice(BaseModel):
 class GeneratedQuestion(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    stem: str = Field(min_length=1, description="Self-contained medical question stem.")
+    stem: str = Field(min_length=1, description="Self-contained question stem.")
     choices: list[Choice] = Field(
         min_length=4,
         max_length=4,

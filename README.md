@@ -1,6 +1,6 @@
 # MCQ-Gen 2
 
-A focused local application for generating and practicing medical multiple-choice questions from a PDF.
+A focused local application for generating and practicing source-grounded questions from a PDF.
 
 ## What it does
 
@@ -51,7 +51,7 @@ or issue separate batch requests.
 - **SATA** (Select All That Apply) questions may have one to four correct answers and
   are graded by exact-set matching.
 - The optional question-writing instruction field can request pedagogical choices such
-  as patient cases or mechanism-focused questions. It cannot change the selected
+  as real-world scenarios or application-focused questions. It cannot change the selected
   question type, count, four-choice structure, PDF-only grounding, or output schema.
 
 ## Test

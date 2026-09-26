@@ -47,7 +47,7 @@ def test_save_quiz_and_retry_lifecycle(tmp_path) -> None:
         mode="high_volume",
         model="gpt-6-luna",
         question_type="mcq",
-        custom_instructions="Use patient cases.",
+        custom_instructions="Use real-world scenarios.",
         requested_count=1,
         result=generation_result(),
     )
@@ -56,7 +56,7 @@ def test_save_quiz_and_retry_lifecycle(tmp_path) -> None:
     assert saved is not None
     assert saved["usage"]["input_tokens"] == 100
     assert saved["question_type"] == "mcq"
-    assert saved["custom_instructions"] == "Use patient cases."
+    assert saved["custom_instructions"] == "Use real-world scenarios."
     assert len(saved["questions"]) == 1
     question_id = saved["questions"][0]["id"]
 
@@ -88,7 +88,7 @@ def test_sata_uses_exact_set_grading(tmp_path) -> None:
         mode="high_quality",
         model="gpt-6-sol",
         question_type="sata",
-        custom_instructions="Use clinical scenarios.",
+        custom_instructions="Use application scenarios.",
         requested_count=1,
         result=generation_result(["A", "C"], [2]),
     )

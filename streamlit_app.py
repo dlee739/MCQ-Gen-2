@@ -41,7 +41,11 @@ from mcqgen2.storage import Database
 ROOT = Path(__file__).resolve().parent
 load_local_api_key(ROOT / ".env")
 
-st.set_page_config(page_title="MCQ-Gen 2", page_icon="🩺", layout="wide")
+st.set_page_config(
+    page_title="MCQ-Gen 2",
+    page_icon=":material/quiz:",
+    layout="wide",
+)
 
 
 @st.cache_resource
@@ -301,7 +305,7 @@ def render_generate(db: Database) -> None:
         "Question-writing instructions (optional)",
         max_chars=MAX_CUSTOM_INSTRUCTIONS_CHARS,
         placeholder=(
-            "Example: Use patient case scenarios and emphasize mechanism-of-action reasoning."
+            "Example: Use real-world scenarios and emphasize application-based reasoning."
         ),
         help=(
             "These preferences can shape style and emphasis, but cannot change the "
@@ -439,7 +443,7 @@ def render_incorrect(db: Database) -> None:
 database_path = os.getenv("MCQGEN_DATABASE_PATH", str(ROOT / "data" / "mcqgen.sqlite3"))
 db = database(database_path)
 st.title("MCQ-Gen 2")
-st.caption("Generate source-grounded medical practice questions from a PDF.")
+st.caption("Generate source-grounded practice questions from a PDF.")
 
 if "quiz" in st.session_state:
     render_quiz(db)
@@ -453,7 +457,9 @@ page = st.sidebar.radio(
     ["Generate", "Question Sets", "Incorrect Questions"],
 )
 st.sidebar.divider()
-st.sidebar.caption("For educational use. Generated medical questions should not guide patient care.")
+st.sidebar.caption(
+    "Generated questions may contain errors; verify them against the source."
+)
 
 if page == "Generate":
     render_generate(db)
