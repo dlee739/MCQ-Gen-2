@@ -128,25 +128,33 @@ def render_choice_review(
     *,
     selected_ids: set[str] | None,
     show_rationales: bool,
+    compact_correct: bool = False,
 ) -> None:
     correct_ids = set(question["correct_choice_ids"])
     rationales = choice_rationales(question) if show_rationales else None
 
     for position, choice in enumerate(question["choices"]):
         choice_id = str(choice["id"])
+        if compact_correct and choice_id not in correct_ids:
+            continue
         letter = chr(ord("A") + position)
         if choice_id in correct_ids:
             icon = "✅"
             status = ":green-badge[Correct]"
-        else:
+        elif selected_ids is not None and choice_id in selected_ids:
             icon = "❌"
             status = ":red-badge[Incorrect]"
+        else:
+            icon = ""
+            status = ""
         selected = (
             " :blue-badge[Your answer]"
             if selected_ids is not None and choice_id in selected_ids
             else ""
         )
-        st.markdown(f"{icon} **{letter}.** {choice['text']} {status}{selected}")
+        prefix = f"{icon} " if icon else ""
+        suffix = f" {status}{selected}" if status or selected else ""
+        st.markdown(f"{prefix}**{letter}.** {choice['text']}{suffix}")
         if rationales is not None:
             st.caption(f"**Why:** {rationales[choice_id]}")
 
@@ -167,6 +175,8 @@ def start_quiz(
         "nonce": random.randrange(1_000_000_000),
         "questions": prepare_questions(questions),
         "answers": {},
+        "flagged_question_ids": set(),
+        "skipped_question_ids": set(),
         "index": 0,
         "kind": kind,
         "question_set_id": question_set_id,
@@ -176,8 +186,39 @@ def start_quiz(
     st.rerun()
 
 
+def submit_quiz(db: Database) -> None:
+    quiz = st.session_state.quiz
+    question_ids = [item["id"] for item in quiz["questions"]]
+    skipped_ids = set(quiz.get("skipped_question_ids", set()))
+    completed_ids = set(quiz["answers"]) | skipped_ids
+    if completed_ids != set(question_ids):
+        raise RuntimeError("Every quiz question must be answered or skipped before submission.")
+
+    submitted_answers = {
+        question_id: list(quiz["answers"].get(question_id, []))
+        for question_id in question_ids
+    }
+    recorded = db.record_quiz(
+        question_ids=question_ids,
+        answers=submitted_answers,
+        kind=quiz["kind"],
+        question_set_id=quiz["question_set_id"],
+    )
+    st.session_state.result = {
+        **quiz,
+        "answers": submitted_answers,
+        "flagged_question_ids": set(quiz.get("flagged_question_ids", set())),
+        "skipped_question_ids": skipped_ids,
+        **recorded,
+    }
+    del st.session_state.quiz
+    st.rerun()
+
+
 def render_quiz(db: Database) -> None:
     quiz = st.session_state.quiz
+    quiz["flagged_question_ids"] = set(quiz.get("flagged_question_ids", set()))
+    quiz["skipped_question_ids"] = set(quiz.get("skipped_question_ids", set()))
     questions = quiz["questions"]
     index = quiz["index"]
     question = questions[index]
@@ -189,12 +230,30 @@ def render_quiz(db: Database) -> None:
     st.caption(f"Question {index + 1} of {len(questions)}")
     st.markdown(f"**{question['stem']}**")
     bookmarked = db.is_bookmarked(question_id)
-    if st.button(
-        "Remove bookmark" if bookmarked else "Bookmark question",
-        icon=":material/bookmark_remove:" if bookmarked else ":material/bookmark_add:",
-        key=f"bookmark_{quiz['nonce']}_{question_id}",
-    ):
-        toggle_bookmark(db, question_id)
+    flagged = question_id in quiz["flagged_question_ids"]
+    bookmark_col, flag_col = st.columns(2)
+    with bookmark_col:
+        if st.button(
+            "Remove bookmark" if bookmarked else "Bookmark question",
+            icon=":material/bookmark_remove:" if bookmarked else ":material/bookmark_add:",
+            key=f"bookmark_{quiz['nonce']}_{question_id}",
+            width="stretch",
+        ):
+            toggle_bookmark(db, question_id)
+    with flag_col:
+        if st.button(
+            "Remove flag" if flagged else "Flag question",
+            icon=":material/flag:" if flagged else ":material/outlined_flag:",
+            key=f"flag_{quiz['nonce']}_{question_id}",
+            width="stretch",
+        ):
+            if flagged:
+                quiz["flagged_question_ids"].remove(question_id)
+            else:
+                quiz["flagged_question_ids"].add(question_id)
+            st.rerun()
+    if flagged:
+        st.markdown(":orange-badge[Flagged]")
 
     choice_by_id = {choice["id"]: choice["text"] for choice in question["choices"]}
     display_letter = {
@@ -216,6 +275,7 @@ def render_quiz(db: Database) -> None:
         )
         if selected is not None:
             quiz["answers"][question_id] = [selected]
+            quiz["skipped_question_ids"].discard(question_id)
     else:
         st.caption("Select every answer that applies.")
         selected_ids: list[str] = []
@@ -232,43 +292,39 @@ def render_quiz(db: Database) -> None:
                 selected_ids.append(choice_id)
         if selected_ids:
             quiz["answers"][question_id] = selected_ids
+            quiz["skipped_question_ids"].discard(question_id)
         else:
             quiz["answers"].pop(question_id, None)
 
-    previous_col, next_col, submit_col, cancel_col = st.columns([1, 1, 1.4, 1])
-    with previous_col:
-        if st.button("Previous", disabled=index == 0, width="stretch"):
-            quiz["index"] -= 1
-            st.rerun()
-    with next_col:
-        current_answered = question_id in quiz["answers"]
-        if st.button(
-            "Next",
-            disabled=index == len(questions) - 1 or not current_answered,
-            width="stretch",
-        ):
+    current_answered = question_id in quiz["answers"]
+    final_question = index == len(questions) - 1
+    advance_col, skip_col, cancel_col = st.columns([1.2, 1.6, 1])
+    with advance_col:
+        if final_question:
+            if st.button(
+                "Submit test",
+                type="primary",
+                disabled=not current_answered,
+                width="stretch",
+            ):
+                submit_quiz(db)
+        elif st.button("Next", disabled=not current_answered, width="stretch"):
             quiz["index"] += 1
             st.rerun()
-    with submit_col:
-        ready = len(quiz["answers"]) == len(questions)
+    with skip_col:
+        skip_label = "Skip and submit test" if final_question else "Skip question"
         if st.button(
-            "Submit test",
-            type="primary",
-            disabled=not ready,
+            skip_label,
+            icon=":material/skip_next:",
             width="stretch",
         ):
-            recorded = db.record_quiz(
-                question_ids=[item["id"] for item in questions],
-                answers=quiz["answers"],
-                kind=quiz["kind"],
-                question_set_id=quiz["question_set_id"],
-            )
-            st.session_state.result = {
-                **quiz,
-                **recorded,
-            }
-            del st.session_state.quiz
-            st.rerun()
+            quiz["answers"].pop(question_id, None)
+            quiz["skipped_question_ids"].add(question_id)
+            if final_question:
+                submit_quiz(db)
+            else:
+                quiz["index"] += 1
+                st.rerun()
     with cancel_col:
         if st.button("Exit", width="stretch"):
             reset_generation_form(db)
@@ -276,7 +332,13 @@ def render_quiz(db: Database) -> None:
             st.rerun()
 
     answered = len(quiz["answers"])
-    st.caption(f"Answered: {answered} / {len(questions)}. Results remain hidden until submission.")
+    skipped = len(quiz["skipped_question_ids"])
+    flagged_count = len(quiz["flagged_question_ids"])
+    remaining = len(questions) - answered - skipped
+    st.caption(
+        f"Answered: {answered} · Skipped: {skipped} · Flagged: {flagged_count} · "
+        f"Remaining: {remaining}. Results remain hidden until submission."
+    )
 
 
 def render_result(db: Database) -> None:
@@ -285,12 +347,15 @@ def render_result(db: Database) -> None:
     answers = result["answers"]
     score = result["score"]
     total = result["total"]
+    flagged_ids = set(result.get("flagged_question_ids", set()))
+    skipped_ids = set(result.get("skipped_question_ids", set()))
 
     st.title("Results")
-    score_col, percentage_col, missed_col = st.columns(3)
+    score_col, percentage_col, missed_col, flagged_col = st.columns(4)
     score_col.metric("Score", f"{score} / {total}")
     percentage_col.metric("Percentage", f"{(score / total) * 100:.1f}%")
     missed_col.metric("Incorrect", total - score)
+    flagged_col.metric("Flagged", len(flagged_ids))
     if result["kind"] == "retry":
         st.info("Correct retries have been removed from the incorrect-question queue.")
 
@@ -301,6 +366,8 @@ def render_result(db: Database) -> None:
         score=score,
         total=total,
         metadata=result["metadata"],
+        flagged_question_ids=flagged_ids,
+        skipped_question_ids=skipped_ids,
     )
     action_col, done_col = st.columns([1, 1])
     with action_col:
@@ -322,7 +389,13 @@ def render_result(db: Database) -> None:
         correct_ids = set(question["correct_choice_ids"])
         correct = selected_ids == correct_ids
         icon = "✅" if correct else "❌"
-        st.markdown(f"### {icon} Question {number}")
+        badges: list[str] = []
+        if question["id"] in flagged_ids:
+            badges.append(":orange-badge[Flagged]")
+        if question["id"] in skipped_ids:
+            badges.append(":gray-badge[Skipped]")
+        badge_text = " " + " ".join(badges) if badges else ""
+        st.markdown(f"### {icon} Question {number}{badge_text}")
         st.markdown(question["stem"])
         bookmarked = db.is_bookmarked(question["id"])
         if st.button(
@@ -335,7 +408,8 @@ def render_result(db: Database) -> None:
         render_choice_review(
             question,
             selected_ids=selected_ids,
-            show_rationales=not correct,
+            show_rationales=not correct or question["id"] in flagged_ids,
+            compact_correct=correct and question["id"] not in flagged_ids,
         )
         st.divider()
 

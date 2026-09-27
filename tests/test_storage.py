@@ -121,6 +121,51 @@ def test_sata_uses_exact_set_grading(tmp_path) -> None:
     assert db.get_retry_questions() == []
 
 
+@pytest.mark.parametrize(
+    ("question_type", "correct_choice_ids", "sata_correct_counts"),
+    [
+        ("mcq", ["A"], []),
+        ("sata", ["A", "C"], [2]),
+    ],
+)
+def test_skipped_answer_is_stored_as_incorrect_and_enters_retry_queue(
+    tmp_path,
+    question_type: str,
+    correct_choice_ids: list[str],
+    sata_correct_counts: list[int],
+) -> None:
+    db = Database(tmp_path / f"skipped-{question_type}.sqlite3")
+    db.initialize()
+    set_id = db.save_question_set(
+        source_filename="lecture.pdf",
+        source_sha256=f"skip-{question_type}",
+        mode="high_volume",
+        model="gpt-6-luna",
+        input_mode="extracted_text",
+        question_type=question_type,
+        requested_count=1,
+        result=generation_result(correct_choice_ids, sata_correct_counts),
+    )
+    saved = db.get_question_set(set_id)
+    assert saved is not None
+    question_id = saved["questions"][0]["id"]
+
+    recorded = db.record_quiz(
+        question_ids=[question_id],
+        answers={question_id: []},
+        kind="full",
+        question_set_id=set_id,
+    )
+
+    assert recorded["score"] == 0
+    assert [item["id"] for item in db.get_retry_questions()] == [question_id]
+    with sqlite3.connect(db.path) as conn:
+        stored = conn.execute(
+            "SELECT selected_choice_ids_json, is_correct FROM attempts"
+        ).fetchone()
+    assert stored == ("[]", 0)
+
+
 def test_v1_database_is_migrated_without_losing_quiz_data(tmp_path) -> None:
     path = tmp_path / "legacy.sqlite3"
     conn = sqlite3.connect(path)

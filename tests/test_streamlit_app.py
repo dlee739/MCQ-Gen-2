@@ -4,6 +4,8 @@ from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
+from mcqgen2.storage import Database
+
 APP_PATH = Path(__file__).parents[1] / "streamlit_app.py"
 
 
@@ -202,6 +204,14 @@ def test_results_use_per_choice_feedback_and_done_resets_generator(
     assert ":green-badge[Correct]" in markdown
     assert ":red-badge[Incorrect]" in markdown
     assert ":blue-badge[Your answer]" in markdown
+    assert "✅ **A.** Alpha :green-badge[Correct] :blue-badge[Your answer]" in markdown
+    assert "Bravo" not in markdown
+    assert "❌ **A.** One :red-badge[Incorrect] :blue-badge[Your answer]" in markdown
+    assert any(element.value == "**B.** Two" for element in at.markdown)
+    assert any(
+        element.value == "✅ **E.** None of the above :green-badge[Correct]"
+        for element in at.markdown
+    )
     assert len(rationales) == 5
     assert all("Correct alpha rationale" not in rationale for rationale in rationales)
     assert any("Every supplied choice is incorrect" in rationale for rationale in rationales)
@@ -212,6 +222,164 @@ def test_results_use_per_choice_feedback_and_done_resets_generator(
     assert at.selectbox(key="api_model").value == "gpt-6-luna"
     assert at.number_input(key="question_count").value == 15
     assert at.text_area[0].value
+
+
+def test_quiz_flags_forward_only_navigation_and_final_skip_submission(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("MCQGEN_DATABASE_PATH", str(tmp_path / "app.sqlite3"))
+    recorded: dict = {}
+
+    def fake_record_quiz(
+        self,
+        *,
+        question_ids,
+        answers,
+        kind,
+        question_set_id,
+    ) -> dict:
+        recorded.update(
+            {
+                "question_ids": question_ids,
+                "answers": answers,
+                "kind": kind,
+                "question_set_id": question_set_id,
+            }
+        )
+        return {"session_id": "session-forward", "score": 1, "total": 2}
+
+    monkeypatch.setattr(Database, "record_quiz", fake_record_quiz)
+    at = AppTest.from_file(APP_PATH, default_timeout=15)
+    at.session_state["quiz"] = {
+        "nonce": 999,
+        "questions": [
+            {
+                "id": "q1",
+                "question_type": "mcq",
+                "stem": "First question?",
+                "choices": [
+                    {"id": "A", "text": "Alpha", "rationale": "Alpha is correct."},
+                    {"id": "B", "text": "Bravo", "rationale": "Bravo is incorrect."},
+                    {"id": "C", "text": "Charlie", "rationale": "Charlie is incorrect."},
+                    {"id": "D", "text": "Delta", "rationale": "Delta is incorrect."},
+                ],
+                "correct_choice_ids": ["A"],
+                "explanation": "Alpha is correct.",
+            },
+            {
+                "id": "q2",
+                "question_type": "mcq",
+                "stem": "Second question?",
+                "choices": [
+                    {"id": "A", "text": "Echo", "rationale": "Echo is correct."},
+                    {"id": "B", "text": "Foxtrot", "rationale": "Foxtrot is incorrect."},
+                    {"id": "C", "text": "Golf", "rationale": "Golf is incorrect."},
+                    {"id": "D", "text": "Hotel", "rationale": "Hotel is incorrect."},
+                ],
+                "correct_choice_ids": ["A"],
+                "explanation": "Echo is correct.",
+            },
+        ],
+        "answers": {},
+        "flagged_question_ids": set(),
+        "skipped_question_ids": set(),
+        "index": 0,
+        "kind": "full",
+        "question_set_id": None,
+        "title": "Forward-only test",
+        "metadata": "test",
+    }
+    at.run()
+
+    assert not at.exception
+    assert all(button.label != "Previous" for button in at.button)
+    assert next(button for button in at.button if button.label == "Next").disabled
+    next(button for button in at.button if button.label == "Flag question").click().run()
+    assert at.session_state["quiz"]["flagged_question_ids"] == {"q1"}
+    next(button for button in at.button if button.label == "Remove flag").click().run()
+    assert at.session_state["quiz"]["flagged_question_ids"] == set()
+    next(button for button in at.button if button.label == "Flag question").click().run()
+    assert at.session_state["quiz"]["flagged_question_ids"] == {"q1"}
+
+    at.radio[0].set_value("A").run()
+    next(button for button in at.button if button.label == "Next").click().run()
+    assert not at.exception
+    assert at.session_state["quiz"]["index"] == 1
+    assert all(button.label != "Previous" for button in at.button)
+
+    next(button for button in at.button if button.label == "Flag question").click().run()
+    next(
+        button for button in at.button if button.label == "Skip and submit test"
+    ).click().run()
+
+    assert not at.exception
+    assert recorded["answers"] == {"q1": ["A"], "q2": []}
+    assert at.session_state["result"]["skipped_question_ids"] == {"q2"}
+    assert at.session_state["result"]["flagged_question_ids"] == {"q1", "q2"}
+    assert any(metric.label == "Flagged" and metric.value == "2" for metric in at.metric)
+    result_markdown = "\n".join(element.value for element in at.markdown)
+    assert ":orange-badge[Flagged]" in result_markdown
+    assert ":gray-badge[Skipped]" in result_markdown
+    result_rationales = [
+        element.value
+        for element in at.caption
+        if isinstance(element.value, str) and element.value.startswith("**Why:**")
+    ]
+    assert any("Bravo is incorrect" in rationale for rationale in result_rationales)
+    assert any("Echo is correct" in rationale for rationale in result_rationales)
+
+
+def test_nonfinal_skip_clears_selection_and_permanently_advances(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("MCQGEN_DATABASE_PATH", str(tmp_path / "app.sqlite3"))
+    at = AppTest.from_file(APP_PATH, default_timeout=15)
+    at.session_state["quiz"] = {
+        "nonce": 321,
+        "questions": [
+            {
+                "id": "q1",
+                "question_type": "mcq",
+                "stem": "First question?",
+                "choices": [
+                    {"id": "A", "text": "Alpha"},
+                    {"id": "B", "text": "Bravo"},
+                    {"id": "C", "text": "Charlie"},
+                    {"id": "D", "text": "Delta"},
+                ],
+                "correct_choice_ids": ["A"],
+                "explanation": "Alpha is correct.",
+            },
+            {
+                "id": "q2",
+                "question_type": "mcq",
+                "stem": "Second question?",
+                "choices": [
+                    {"id": "A", "text": "Echo"},
+                    {"id": "B", "text": "Foxtrot"},
+                    {"id": "C", "text": "Golf"},
+                    {"id": "D", "text": "Hotel"},
+                ],
+                "correct_choice_ids": ["A"],
+                "explanation": "Echo is correct.",
+            },
+        ],
+        "answers": {},
+        "index": 0,
+        "kind": "full",
+        "question_set_id": None,
+        "title": "Skip test",
+        "metadata": "test",
+    }
+    at.run()
+    at.radio[0].set_value("B").run()
+    next(button for button in at.button if button.label == "Skip question").click().run()
+
+    assert not at.exception
+    assert at.session_state["quiz"]["index"] == 1
+    assert "q1" not in at.session_state["quiz"]["answers"]
+    assert at.session_state["quiz"]["skipped_question_ids"] == {"q1"}
+    assert all(button.label != "Previous" for button in at.button)
 
 
 def test_sata_quiz_collects_multiple_answers(tmp_path, monkeypatch) -> None:

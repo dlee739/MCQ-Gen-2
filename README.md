@@ -15,6 +15,7 @@ A focused local application for generating and practicing source-grounded questi
 - Supports `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`.
 - Records actual input/output token usage and estimates cost from a dated pricing snapshot.
 - Saves question sets and quiz attempts locally in SQLite.
+- Runs forward-only practice tests with per-test flags and explicit skipped questions.
 - Tracks incorrect questions until they are answered correctly on a later attempt.
 - Supports persistent bookmarks, including mixed bookmarked-question practice.
 - Can delete all generated runs and bookmarks while preserving instruction profiles.

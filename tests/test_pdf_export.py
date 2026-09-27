@@ -114,3 +114,33 @@ def test_structured_choice_rationales_take_precedence_over_legacy_text() -> None
         "A": "Structured alpha.",
         "B": "Structured bravo.",
     }
+
+
+def test_results_pdf_marks_flagged_and_skipped_questions() -> None:
+    question = {
+        "id": "q1",
+        "stem": "Which answer is correct?",
+        "choices": [
+            {"id": "A", "text": "Alpha", "rationale": "Alpha is correct."},
+            {"id": "B", "text": "Bravo", "rationale": "Bravo is incorrect."},
+            {"id": "C", "text": "Charlie", "rationale": "Charlie is incorrect."},
+            {"id": "D", "text": "Delta", "rationale": "Delta is incorrect."},
+        ],
+        "correct_choice_ids": ["A"],
+        "explanation": "Alpha is correct.",
+    }
+    result = build_results_pdf(
+        title="Test results",
+        questions=[question],
+        answers={"q1": []},
+        score=0,
+        total=1,
+        flagged_question_ids={"q1"},
+        skipped_question_ids={"q1"},
+    )
+    with pymupdf.open(stream=result, filetype="pdf") as document:
+        text = "\n".join(page.get_text() for page in document)
+
+    assert "Flagged: 1" in text
+    assert "Skipped: 1" in text
+    assert "Question 1 (Incorrect; Flagged; Skipped)" in text

@@ -57,7 +57,7 @@ MAX_PDF_BYTES = 50 * 1024 * 1024
 MAX_INSTRUCTION_RULES_CHARS = 2_000
 # Compatibility alias for older callers and stored data.
 MAX_CUSTOM_INSTRUCTIONS_CHARS = MAX_INSTRUCTION_RULES_CHARS
-PROMPT_VERSION = "mcq-v7"
+PROMPT_VERSION = "mcq-v8"
 
 QUESTION_TYPE_LABELS: dict[QuestionType, str] = {
     "mcq": "MCQ",

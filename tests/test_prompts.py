@@ -20,9 +20,11 @@ def test_generation_prompt_assembles_every_mode_and_type(
 
     assert f"Create exactly 8 {question_type.upper()} questions" in prompt
     assert f"{question_type.upper()} rules:" in prompt
-    assert "Never mention or allude to the PDF" in prompt
+    assert "standalone assessment content" in prompt
+    assert '"the source states,"' in prompt
     assert "Do not label choices with letters or numbers" in prompt
     assert "rationale in the same object" in prompt
+    assert "Every question must be answerable from the source material" not in prompt
     assert "Use concise scenarios." in prompt
     assert "question_writing_preferences" not in prompt
 
@@ -40,6 +42,6 @@ def test_generation_prompt_handles_no_custom_instructions() -> None:
 
 def test_system_instructions_are_centralized_and_domain_neutral() -> None:
     assert "structured output contract" in SYSTEM_INSTRUCTIONS
-    assert "source-only constraint" in SYSTEM_INSTRUCTIONS
+    assert "source-only constraint" not in SYSTEM_INSTRUCTIONS
     assert "medical" not in SYSTEM_INSTRUCTIONS.casefold()
     assert "clinical" not in SYSTEM_INSTRUCTIONS.casefold()

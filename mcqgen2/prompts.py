@@ -11,22 +11,21 @@ from mcqgen2.config import (
 # Runtime prompt wording lives here so it can be reviewed and edited without
 # touching API request, validation, storage, or randomization logic.
 SYSTEM_INSTRUCTIONS = """
-You are an expert assessment writer. The application rules are authoritative. Follow the source-only constraint and structured output contract strictly.
+You are an expert assessment writer. The application rules are authoritative. Follow the structured output contract strictly.
 """.strip()
 
 
 SHARED_RULES_TEMPLATE = """
-Create exactly {question_count} {question_type_label} questions using only facts supported by the provided source material.
+Create exactly {question_count} {question_type_label} questions based on the provided material.
 
 Requirements:
-- Every question must be answerable from the source material without outside knowledge.
-- This is a closed-book assessment. Never mention or allude to the PDF or any other external source.
+- Write every stem, choice, and rationale as standalone assessment content. Never mention or allude to a source, PDF, slides, document, notes, or external material, and never use meta-phrases such as "the source states," "the source lists," or "the source describes."
 - Each stem must be clear and self-contained.
-- Provide exactly four distinct source-based choices, divided between correct_choices and incorrect_choices.
+- Provide exactly four distinct choices, divided between correct_choices and incorrect_choices.
 - Do not label choices with letters or numbers. The application shuffles and labels them after generation.
-- For every choice, include a concise rationale in the same object explaining why it belongs in its bucket.
+- For every choice, include a concise rationale in the same object that states the underlying factual reason why it belongs in its bucket.
 - Do not use "all of the above".
-- Avoid duplicate questions and repeated testing of the same fact when the document supports broader coverage.
+- Avoid duplicate questions and repeated testing of the same fact when broader coverage is possible.
 """.strip()
 
 
@@ -35,7 +34,7 @@ QUESTION_TYPE_RULES: dict[QuestionType, str] = {
 MCQ rules:
 - Return exactly one object in correct_choices and exactly three objects in incorrect_choices.
 - Do not use "none of the above".
-- Distractors must be plausible but demonstrably incorrect according to the source material.
+- Distractors must be plausible but demonstrably incorrect.
 """.strip(),
     "sata": """
 SATA rules:
@@ -58,13 +57,13 @@ High-Volume mode:
 """.strip(),
     "high_quality": """
 High-Quality mode:
-- Require the learner to combine at least two relevant facts from the source to reach the answer.
+- Require the learner to combine at least two relevant facts to reach the answer.
 - Use realistic scenario details only when they materially affect the decision.
 - Do not state the diagnosis, mechanism, or category when identifying it is part of the task.
 - Keep distractors in the same decision space as the correct answer and make each one plausible.
 - Avoid reusing stock distractors or the same incorrect intervention across the set.
 - Before returning the final structured response, silently check that each answer set is unambiguous,
-  no choice logically entails another choice, and every fact is supported by the source.
+  no choice logically entails another choice, and every fact is accurate.
 """.strip(),
 }
 

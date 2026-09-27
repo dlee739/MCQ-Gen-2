@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
-from typing import Any, Mapping, Sequence
+from typing import Any, Collection, Mapping, Sequence
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
@@ -21,7 +21,11 @@ def build_results_pdf(
     score: int,
     total: int,
     metadata: str = "",
+    flagged_question_ids: Collection[str] = (),
+    skipped_question_ids: Collection[str] = (),
 ) -> bytes:
+    flagged_ids = {str(value) for value in flagged_question_ids}
+    skipped_ids = {str(value) for value in skipped_question_ids}
     buffer = BytesIO()
     document = SimpleDocTemplate(
         buffer,
@@ -51,6 +55,12 @@ def build_results_pdf(
     )
     story: list[Any] = [Paragraph(escape(title), styles["Title"])]
     story.append(Paragraph(f"Score: {score} / {total}", styles["Heading2"]))
+    story.append(
+        Paragraph(
+            f"Flagged: {len(flagged_ids)} &nbsp;&nbsp; Skipped: {len(skipped_ids)}",
+            styles["Normal"],
+        )
+    )
     if metadata:
         story.append(Paragraph(escape(metadata), styles["Normal"]))
     story.append(Spacer(1, 12))
@@ -59,7 +69,12 @@ def build_results_pdf(
         question_id = str(question["id"])
         selected_ids = set(answers.get(question_id, []))
         correct_ids = {str(value) for value in question["correct_choice_ids"]}
-        status = "Correct" if selected_ids == correct_ids else "Incorrect"
+        status_parts = ["Correct" if selected_ids == correct_ids else "Incorrect"]
+        if question_id in flagged_ids:
+            status_parts.append("Flagged")
+        if question_id in skipped_ids:
+            status_parts.append("Skipped")
+        status = "; ".join(status_parts)
         story.append(
             Paragraph(
                 f"<b>Question {number} ({status})</b><br/>{escape(str(question['stem']))}",

@@ -639,7 +639,7 @@ class Database:
         if kind not in {"full", "retry", "bookmarked"}:
             raise ValueError("kind must be 'full', 'retry', or 'bookmarked'")
         if not question_ids or set(question_ids) != set(answers):
-            raise ValueError("Every quiz question must have an answer.")
+            raise ValueError("Every quiz question must have an answer or explicit skip.")
 
         placeholders = ",".join("?" for _ in question_ids)
         session_id = uuid.uuid4().hex
@@ -676,14 +676,18 @@ class Database:
                 if isinstance(selected, str):
                     raise ValueError("Quiz answers must be choice-ID sequences.")
                 selected_ids = list(selected)
-                if not selected_ids or len(selected_ids) != len(set(selected_ids)):
+                if len(selected_ids) != len(set(selected_ids)):
                     raise ValueError("Each quiz answer must contain unique choices.")
                 if any(
                     choice_id not in valid_choices[question_id]
                     for choice_id in selected_ids
                 ):
                     raise ValueError("A quiz answer does not reference a valid choice.")
-                if question_types[question_id] == "mcq" and len(selected_ids) != 1:
+                if (
+                    selected_ids
+                    and question_types[question_id] == "mcq"
+                    and len(selected_ids) != 1
+                ):
                     raise ValueError("MCQ answers must contain exactly one choice.")
                 normalized_answers[question_id] = selected_ids
 

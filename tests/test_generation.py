@@ -195,7 +195,9 @@ def test_generation_is_one_full_text_request_by_default() -> None:
     assert "Source material for the questions." in content[0]["text"]
     assert "exactly 3" in content[1]["text"]
     assert "Use {real-world} scenarios." in content[1]["text"]
-    assert "Never mention or allude to the PDF" in content[1]["text"]
+    assert "standalone assessment content" in content[1]["text"]
+    assert '"the source lists,"' in content[1]["text"]
+    assert "Every question must be answerable from the source material" not in content[1]["text"]
     domain_defaults = ("medi" "cal", "clini" "cal")
     assert all(term not in request["instructions"].casefold() for term in domain_defaults)
     assert all(term not in content[1]["text"].casefold() for term in domain_defaults)
@@ -308,7 +310,7 @@ def test_conflicting_custom_instruction_remains_subordinate() -> None:
     prompt = request["input"][0]["content"][1]["text"]
     assert "application rules are authoritative" in request["instructions"]
     assert "Create exactly 1 MCQ" in prompt
-    assert "Provide exactly four distinct source-based choices" in prompt
+    assert "Provide exactly four distinct choices" in prompt
     assert "Do not label choices with letters or numbers" in prompt
     assert conflicting in prompt
     assert "question_writing_preferences" not in prompt
