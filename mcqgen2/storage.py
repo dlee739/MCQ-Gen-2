@@ -390,7 +390,10 @@ class Database:
                         ordinal,
                         question.stem,
                         json.dumps(
-                            [choice.model_dump() for choice in question.choices],
+                            [
+                                choice.model_dump(exclude_none=True)
+                                for choice in question.choices
+                            ],
                             ensure_ascii=False,
                         ),
                         json.dumps(question.correct_choice_ids),

@@ -20,7 +20,8 @@ def test_generate_page_exposes_input_type_and_instruction_controls(
     assert at.segmented_control[1].value == "mcq"
     assert at.selectbox(key="generation_mode").value == "high_volume"
     assert at.selectbox(key="api_model").value == "gpt-6-luna"
-    assert at.number_input(key="question_count").value == 10
+    assert at.number_input(key="question_count").value == 15
+    assert at.button[0].label == "Generate questions"
     assert at.selectbox[2].label == "Instruction profile"
     assert at.text_area[0].label == "Instruction rules"
     assert any(element.value == "Local beta 0.1.0b1" for element in at.caption)
@@ -52,7 +53,165 @@ def test_generation_mode_updates_defaults_and_preserves_manual_overrides(
 
     at.selectbox(key="generation_mode").select("high_volume").run()
     assert at.selectbox(key="api_model").value == "gpt-6-luna"
-    assert at.number_input(key="question_count").value == 10
+    assert at.number_input(key="question_count").value == 15
+
+
+def test_empty_instruction_state_recovers_default_rules(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("MCQGEN_DATABASE_PATH", str(tmp_path / "app.sqlite3"))
+    at = AppTest.from_file(APP_PATH, default_timeout=15).run()
+
+    at.session_state["instruction_rules_high_volume"] = ""
+    at.run()
+
+    assert not at.exception
+    assert at.text_area[0].value
+
+
+def test_generation_drafts_survive_mode_switches_and_navigation(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("MCQGEN_DATABASE_PATH", str(tmp_path / "app.sqlite3"))
+    at = AppTest.from_file(APP_PATH, default_timeout=15).run()
+
+    at.text_area[0].set_value("High-Volume unsaved draft").run()
+    at.selectbox(key="generation_mode").select("high_quality").run()
+    at.text_area[0].set_value("High-Quality unsaved draft").run()
+    at.selectbox(key="generation_mode").select("high_volume").run()
+
+    assert not at.exception
+    assert at.text_area[0].value == "High-Volume unsaved draft"
+
+    at.radio(key="navigation").set_value("Question Sets").run()
+    at.radio(key="navigation").set_value("Generate").run()
+
+    assert not at.exception
+    assert at.text_area[0].value == "High-Volume unsaved draft"
+    at.selectbox(key="generation_mode").select("high_quality").run()
+    assert at.text_area[0].value == "High-Quality unsaved draft"
+
+
+def _quiz_state() -> dict:
+    return {
+        "nonce": 123,
+        "questions": [
+            {
+                "id": "q1",
+                "question_type": "mcq",
+                "stem": "Which answer is supported?",
+                "choices": [
+                    {"id": "A", "text": "Alpha"},
+                    {"id": "B", "text": "Bravo"},
+                    {"id": "C", "text": "Charlie"},
+                    {"id": "D", "text": "Delta"},
+                ],
+                "correct_choice_ids": ["A"],
+                "explanation": "Alpha is supported.",
+            }
+        ],
+        "answers": {},
+        "index": 0,
+        "kind": "full",
+        "question_set_id": None,
+        "title": "Test",
+        "metadata": "",
+    }
+
+
+def test_exiting_quiz_restores_complete_fresh_generation_state(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("MCQGEN_DATABASE_PATH", str(tmp_path / "app.sqlite3"))
+    at = AppTest.from_file(APP_PATH, default_timeout=15).run()
+    at.selectbox(key="generation_mode").select("high_quality").run()
+    at.number_input(key="question_count").set_value(7).run()
+    at.text_area[0].set_value("Unsaved test draft").run()
+    at.session_state["last_generated_id"] = "stale-set"
+    at.session_state["quiz"] = _quiz_state()
+    at.run()
+
+    next(button for button in at.button if button.label == "Exit").click().run()
+
+    assert not at.exception
+    assert at.radio(key="navigation").value == "Generate"
+    assert at.selectbox(key="generation_mode").value == "high_volume"
+    assert at.selectbox(key="api_model").value == "gpt-6-luna"
+    assert at.number_input(key="question_count").value == 15
+    assert at.segmented_control(key="input_mode").value == "extracted_text"
+    assert at.segmented_control(key="question_type").value == "mcq"
+    assert at.text_area[0].value
+    assert at.text_area[0].value != "Unsaved test draft"
+    assert "last_generated_id" not in at.session_state
+
+
+def test_results_use_per_choice_feedback_and_done_resets_generator(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("MCQGEN_DATABASE_PATH", str(tmp_path / "app.sqlite3"))
+    at = AppTest.from_file(APP_PATH, default_timeout=15)
+    at.session_state["result"] = {
+        "questions": [
+            {
+                "id": "q1",
+                "question_type": "mcq",
+                "stem": "Correctly answered question?",
+                "choices": [
+                    {"id": "A", "text": "Alpha", "rationale": "Correct alpha rationale."},
+                    {"id": "B", "text": "Bravo", "rationale": "Wrong bravo rationale."},
+                    {"id": "C", "text": "Charlie", "rationale": "Wrong charlie rationale."},
+                    {"id": "D", "text": "Delta", "rationale": "Wrong delta rationale."},
+                ],
+                "correct_choice_ids": ["A"],
+                "explanation": "Legacy correct explanation.",
+            },
+            {
+                "id": "q2",
+                "question_type": "sata",
+                "stem": "Incorrectly answered SATA question?",
+                "choices": [
+                    {"id": "A", "text": "One", "rationale": "One is incorrect."},
+                    {"id": "B", "text": "Two", "rationale": "Two is incorrect."},
+                    {"id": "C", "text": "Three", "rationale": "Three is incorrect."},
+                    {"id": "D", "text": "Four", "rationale": "Four is incorrect."},
+                    {
+                        "id": "E",
+                        "text": "None of the above",
+                        "rationale": "Every supplied choice is incorrect.",
+                    },
+                ],
+                "correct_choice_ids": ["E"],
+                "explanation": "Legacy SATA explanation.",
+            },
+        ],
+        "answers": {"q1": ["A"], "q2": ["A"]},
+        "score": 1,
+        "total": 2,
+        "kind": "full",
+        "title": "Review",
+        "metadata": "",
+        "session_id": "session-1",
+    }
+    at.run()
+
+    assert not at.exception
+    markdown = "\n".join(element.value for element in at.markdown)
+    rationales = [
+        element.value
+        for element in at.caption
+        if isinstance(element.value, str) and element.value.startswith("**Why:**")
+    ]
+    assert ":green-badge[Correct]" in markdown
+    assert ":red-badge[Incorrect]" in markdown
+    assert ":blue-badge[Your answer]" in markdown
+    assert len(rationales) == 5
+    assert all("Correct alpha rationale" not in rationale for rationale in rationales)
+    assert any("Every supplied choice is incorrect" in rationale for rationale in rationales)
+
+    next(button for button in at.button if button.label == "Done").click().run()
+    assert not at.exception
+    assert at.selectbox(key="generation_mode").value == "high_volume"
+    assert at.selectbox(key="api_model").value == "gpt-6-luna"
+    assert at.number_input(key="question_count").value == 15
+    assert at.text_area[0].value
 
 
 def test_sata_quiz_collects_multiple_answers(tmp_path, monkeypatch) -> None:

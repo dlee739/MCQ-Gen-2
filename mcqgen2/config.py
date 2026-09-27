@@ -44,7 +44,7 @@ MODE_DEFAULT_MODELS: dict[GenerationMode, str] = {
     "high_quality": "gpt-6-sol",
 }
 MODE_DEFAULT_QUESTION_COUNTS: dict[GenerationMode, int] = {
-    "high_volume": 10,
+    "high_volume": 15,
     "high_quality": 5,
 }
 DEFAULT_MODEL = MODE_DEFAULT_MODELS[DEFAULT_MODE]

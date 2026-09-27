@@ -12,6 +12,11 @@ class Choice(BaseModel):
 
     id: ChoiceId = Field(description="Stable internal choice identifier.")
     text: str = Field(min_length=1, description="Answer choice text.")
+    rationale: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Why this displayed choice is correct or incorrect.",
+    )
 
 
 class ModelChoice(BaseModel):

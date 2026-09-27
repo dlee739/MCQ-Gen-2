@@ -98,25 +98,35 @@ def randomize_choice_positions(
     for new_id, (choice, is_correct) in zip(
         ("A", "B", "C", "D"), shuffled, strict=True
     ):
-        remapped_choices.append({"id": new_id, "text": choice.text})
-        if is_correct:
-            remapped_correct_ids.append(new_id)
         rationale = choice.rationale.rstrip()
         if rationale[-1] not in ".!?":
             rationale += "."
+        remapped_choices.append(
+            {"id": new_id, "text": choice.text, "rationale": rationale}
+        )
+        if is_correct:
+            remapped_correct_ids.append(new_id)
         explanation_parts.append(f"{choice.text}: {rationale}")
 
     if question_type == "sata":
-        remapped_choices.append({"id": "E", "text": "None of the above"})
         if not remapped_correct_ids:
             remapped_correct_ids = ["E"]
+            none_rationale = "Correct because every supplied choice is incorrect."
             explanation_parts.append(
-                "None of the above: Correct because every supplied choice is incorrect."
+                f"None of the above: {none_rationale}"
             )
         else:
+            none_rationale = "Incorrect because at least one supplied choice is correct."
             explanation_parts.append(
-                "None of the above: Incorrect because at least one supplied choice is correct."
+                f"None of the above: {none_rationale}"
             )
+        remapped_choices.append(
+            {
+                "id": "E",
+                "text": "None of the above",
+                "rationale": none_rationale,
+            }
+        )
 
     return GeneratedQuestion.model_validate(
         {

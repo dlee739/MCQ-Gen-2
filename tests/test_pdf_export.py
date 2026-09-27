@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pymupdf
 
-from mcqgen2.pdf_export import _choice_rationales, build_results_pdf
+from mcqgen2.explanations import choice_rationales
+from mcqgen2.pdf_export import build_results_pdf
 
 
 def test_results_pdf_is_created() -> None:
@@ -49,7 +50,7 @@ def test_results_pdf_places_each_rationale_below_its_choice() -> None:
         ),
     }
 
-    assert _choice_rationales(question) == {
+    assert choice_rationales(question) == {
         "A": "Rationale for first.",
         "B": "Rationale for second.",
         "C": "Rationale for third.",
@@ -84,7 +85,7 @@ def test_results_pdf_keeps_legacy_explanation_as_a_readable_fallback() -> None:
         "correct_choice_ids": ["A"],
         "explanation": "A legacy free-form explanation that cannot be split safely.",
     }
-    assert _choice_rationales(question) is None
+    assert choice_rationales(question) is None
 
     result = build_results_pdf(
         title="Test results",
@@ -98,3 +99,18 @@ def test_results_pdf_keeps_legacy_explanation_as_a_readable_fallback() -> None:
 
     assert "Explanation:" in text
     assert "A legacy free-form explanation" in text
+
+
+def test_structured_choice_rationales_take_precedence_over_legacy_text() -> None:
+    question = {
+        "choices": [
+            {"id": "A", "text": "Alpha", "rationale": "Structured alpha."},
+            {"id": "B", "text": "Bravo", "rationale": "Structured bravo."},
+        ],
+        "explanation": "An older explanation that cannot be split.",
+    }
+
+    assert choice_rationales(question) == {
+        "A": "Structured alpha.",
+        "B": "Structured bravo.",
+    }

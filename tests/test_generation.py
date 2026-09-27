@@ -127,6 +127,10 @@ def test_choice_randomization_relabels_positions_and_correct_ids() -> None:
         "None of the above",
     ]
     assert randomized_sata.correct_choice_ids == ["C", "D"]
+    assert randomized_sata.choices[3].rationale == "Alpha rationale 1."
+    assert randomized_sata.choices[4].rationale == (
+        "Incorrect because at least one supplied choice is correct."
+    )
     assert "Alpha 1: Alpha rationale 1." in randomized_sata.explanation
     assert "None of the above: Incorrect" in randomized_sata.explanation
 
@@ -156,6 +160,9 @@ def test_answer_key_is_derived_from_bucket_after_shuffling() -> None:
     randomized = randomize_choice_positions(question, rng=ReverseRng())
 
     assert randomized.choices[3].text == "Prerenal"
+    assert randomized.choices[3].rationale == (
+        "Decreased renal perfusion defines this category."
+    )
     assert randomized.correct_choice_ids == ["D"]
     assert "Prerenal: Decreased renal perfusion defines this category." in randomized.explanation
     assert "C is correct" not in randomized.explanation

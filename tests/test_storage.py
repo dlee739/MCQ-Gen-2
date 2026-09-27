@@ -16,10 +16,10 @@ def generated_question(correct_choice_ids: list[str] | None = None) -> Generated
         {
             "stem": "What is the best answer?",
             "choices": [
-                {"id": "A", "text": "Correct answer"},
-                {"id": "B", "text": "Distractor one"},
-                {"id": "C", "text": "Distractor two"},
-                {"id": "D", "text": "Distractor three"},
+                {"id": "A", "text": "Correct answer", "rationale": "Supported."},
+                {"id": "B", "text": "Distractor one", "rationale": "Not supported."},
+                {"id": "C", "text": "Distractor two", "rationale": "Contradicted."},
+                {"id": "D", "text": "Distractor three", "rationale": "Unrelated."},
             ],
             "correct_choice_ids": correct_choice_ids or ["A"],
             "explanation": "Correct answer is supported by the source.",
@@ -62,6 +62,7 @@ def test_save_quiz_and_retry_lifecycle(tmp_path) -> None:
     assert saved["input_mode"] == "extracted_text"
     assert saved["custom_instructions"] == "Use real-world scenarios."
     assert len(saved["questions"]) == 1
+    assert saved["questions"][0]["choices"][0]["rationale"] == "Supported."
     question_id = saved["questions"][0]["id"]
 
     first = db.record_quiz(

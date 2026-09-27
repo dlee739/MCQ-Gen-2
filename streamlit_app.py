@@ -32,6 +32,7 @@ from mcqgen2.generation import (
     source_sha256,
     validate_pdf,
 )
+from mcqgen2.explanations import choice_rationales
 from mcqgen2.pdf_export import build_results_pdf
 from mcqgen2.pricing import (
     MODEL_PRICING,
@@ -53,6 +54,9 @@ st.set_page_config(
 GENERATION_MODE_KEY = "generation_mode"
 API_MODEL_KEY = "api_model"
 QUESTION_COUNT_KEY = "question_count"
+INPUT_MODE_KEY = "input_mode"
+QUESTION_TYPE_KEY = "question_type"
+NAVIGATION_KEY = "navigation"
 
 
 @st.cache_resource
@@ -72,6 +76,23 @@ def reset_generation_defaults() -> None:
     mode = st.session_state[GENERATION_MODE_KEY]
     st.session_state[API_MODEL_KEY] = MODE_DEFAULT_MODELS[mode]
     st.session_state[QUESTION_COUNT_KEY] = MODE_DEFAULT_QUESTION_COUNTS[mode]
+
+
+def reset_generation_form(db: Database) -> None:
+    """Return the generation page to a complete, usable fresh state."""
+    st.session_state[GENERATION_MODE_KEY] = DEFAULT_MODE
+    st.session_state[API_MODEL_KEY] = MODE_DEFAULT_MODELS[DEFAULT_MODE]
+    st.session_state[QUESTION_COUNT_KEY] = MODE_DEFAULT_QUESTION_COUNTS[DEFAULT_MODE]
+    st.session_state[INPUT_MODE_KEY] = DEFAULT_INPUT_MODE
+    st.session_state[QUESTION_TYPE_KEY] = DEFAULT_QUESTION_TYPE
+    st.session_state[NAVIGATION_KEY] = "Generate"
+    st.session_state.pop("last_generated_id", None)
+
+    for mode in MODE_CONFIGS:
+        profile = db.get_default_instruction_profile(mode)
+        st.session_state[f"instruction_profile_{mode}"] = profile["id"]
+        st.session_state[f"instruction_profile_loaded_{mode}"] = profile["id"]
+        st.session_state[f"instruction_rules_{mode}"] = profile["instructions"]
 
 
 def prepare_questions(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -100,6 +121,37 @@ def enforce_sata_exclusivity(widget_key: str, changed_id: str, choice_ids: list[
                 st.session_state[f"{widget_key}_{choice_id}"] = False
     else:
         st.session_state[f"{widget_key}_E"] = False
+
+
+def render_choice_review(
+    question: dict[str, Any],
+    *,
+    selected_ids: set[str] | None,
+    show_rationales: bool,
+) -> None:
+    correct_ids = set(question["correct_choice_ids"])
+    rationales = choice_rationales(question) if show_rationales else None
+
+    for position, choice in enumerate(question["choices"]):
+        choice_id = str(choice["id"])
+        letter = chr(ord("A") + position)
+        if choice_id in correct_ids:
+            icon = "✅"
+            status = ":green-badge[Correct]"
+        else:
+            icon = "❌"
+            status = ":red-badge[Incorrect]"
+        selected = (
+            " :blue-badge[Your answer]"
+            if selected_ids is not None and choice_id in selected_ids
+            else ""
+        )
+        st.markdown(f"{icon} **{letter}.** {choice['text']} {status}{selected}")
+        if rationales is not None:
+            st.caption(f"**Why:** {rationales[choice_id]}")
+
+    if show_rationales and rationales is None:
+        st.info(question["explanation"])
 
 
 def start_quiz(
@@ -219,6 +271,7 @@ def render_quiz(db: Database) -> None:
             st.rerun()
     with cancel_col:
         if st.button("Exit", width="stretch"):
+            reset_generation_form(db)
             del st.session_state.quiz
             st.rerun()
 
@@ -260,6 +313,7 @@ def render_result(db: Database) -> None:
         )
     with done_col:
         if st.button("Done", type="primary", width="stretch"):
+            reset_generation_form(db)
             del st.session_state.result
             st.rerun()
 
@@ -278,16 +332,11 @@ def render_result(db: Database) -> None:
         ):
             toggle_bookmark(db, question["id"])
 
-        for position, choice in enumerate(question["choices"]):
-            letter = chr(ord("A") + position)
-            markers: list[str] = []
-            if choice["id"] in selected_ids:
-                markers.append("your answer")
-            if choice["id"] in correct_ids:
-                markers.append("correct")
-            marker = f" — **{', '.join(markers)}**" if markers else ""
-            st.markdown(f"{letter}. {choice['text']}{marker}")
-        st.info(question["explanation"])
+        render_choice_review(
+            question,
+            selected_ids=selected_ids,
+            show_rationales=not correct,
+        )
         st.divider()
 
 
@@ -354,9 +403,15 @@ def render_instruction_profile_editor(
             + (" (default)" if profile_by_id[profile_id]["is_default"] else "")
         ),
         help="Profiles are kept separately for each generation mode.",
+        persist_state="session",
     )
     selected = profile_by_id[selected_id]
-    if st.session_state.get(loaded_key) != selected_id:
+    current_instructions = st.session_state.get(editor_key)
+    if (
+        st.session_state.get(loaded_key) != selected_id
+        or not isinstance(current_instructions, str)
+        or not current_instructions.strip()
+    ):
         st.session_state[editor_key] = selected["instructions"]
         st.session_state[loaded_key] = selected_id
 
@@ -369,6 +424,7 @@ def render_instruction_profile_editor(
             "These editable rules control the writing style for this request. "
             "Question count, source grounding, answer structure, and output format remain fixed."
         ),
+        persist_state="session",
     )
     save_col, new_col, default_col, delete_col = st.columns(4)
     with save_col:
@@ -419,13 +475,18 @@ def render_generate(db: Database) -> None:
         )
 
     uploaded = st.file_uploader("Source PDF", type=["pdf"], accept_multiple_files=False)
+    generate_button_slot = st.empty()
+
+    if st.session_state.get(INPUT_MODE_KEY) not in INPUT_MODE_LABELS:
+        st.session_state[INPUT_MODE_KEY] = DEFAULT_INPUT_MODE
     input_mode = st.segmented_control(
         "Input processing",
         options=list(INPUT_MODE_LABELS),
-        default=DEFAULT_INPUT_MODE,
         required=True,
         format_func=lambda value: INPUT_MODE_LABELS[value],
         width="stretch",
+        key=INPUT_MODE_KEY,
+        persist_state="session",
         help=(
             "Extracted text is much less expensive. Send the original PDF when "
             "questions depend on diagrams or other page visuals."
@@ -436,13 +497,16 @@ def render_generate(db: Database) -> None:
     else:
         st.caption("Includes page images and can use substantially more input tokens.")
 
+    if st.session_state.get(QUESTION_TYPE_KEY) not in QUESTION_TYPE_LABELS:
+        st.session_state[QUESTION_TYPE_KEY] = DEFAULT_QUESTION_TYPE
     question_type = st.segmented_control(
         "Question type",
         options=list(QUESTION_TYPE_LABELS),
-        default=DEFAULT_QUESTION_TYPE,
         required=True,
         format_func=lambda value: QUESTION_TYPE_LABELS[value],
         width="stretch",
+        key=QUESTION_TYPE_KEY,
+        persist_state="session",
         help="MCQ has one correct answer. SATA means Select All That Apply.",
     )
     if st.session_state.get(GENERATION_MODE_KEY) not in MODE_CONFIGS:
@@ -453,6 +517,7 @@ def render_generate(db: Database) -> None:
     question_count_state = st.session_state.get(QUESTION_COUNT_KEY)
     if (
         not isinstance(question_count_state, int)
+        or isinstance(question_count_state, bool)
         or not MIN_QUESTION_COUNT <= question_count_state <= MAX_QUESTION_COUNT
     ):
         st.session_state[QUESTION_COUNT_KEY] = MODE_DEFAULT_QUESTION_COUNTS[selected_mode]
@@ -465,6 +530,7 @@ def render_generate(db: Database) -> None:
             format_func=lambda value: MODE_CONFIGS[value].label,
             key=GENERATION_MODE_KEY,
             on_change=reset_generation_defaults,
+            persist_state="session",
         )
         st.caption(MODE_CONFIGS[mode].description)
     with middle:
@@ -472,6 +538,7 @@ def render_generate(db: Database) -> None:
             "API model",
             options=list(ALLOWED_MODELS),
             key=API_MODEL_KEY,
+            persist_state="session",
         )
         if MODEL_PRICING[model].note:
             st.caption(MODEL_PRICING[model].note)
@@ -482,6 +549,7 @@ def render_generate(db: Database) -> None:
             max_value=MAX_QUESTION_COUNT,
             step=1,
             key=QUESTION_COUNT_KEY,
+            persist_state="session",
         )
 
     profile_name, instruction_rules = render_instruction_profile_editor(db, mode)
@@ -494,17 +562,21 @@ def render_generate(db: Database) -> None:
         )
         st.link_button("Official OpenAI pricing", PRICING_SOURCE)
 
-    generate_clicked = st.button(
-        "Generate questions",
-        type="primary",
-        disabled=(
-            uploaded is None
-            or not api_key_available
-            or not instruction_rules.strip()
-        ),
-    )
-    if generate_clicked and uploaded is not None:
-        pdf_bytes = uploaded.getvalue()
+    pdf_bytes = uploaded.getvalue() if uploaded is not None else None
+    uploaded_sha = source_sha256(pdf_bytes) if pdf_bytes is not None else None
+    with generate_button_slot:
+        generate_clicked = st.button(
+            "Generate questions",
+            type="primary",
+            disabled=(
+                pdf_bytes is None
+                or not api_key_available
+                or not instruction_rules.strip()
+            ),
+            width="stretch",
+        )
+    if generate_clicked and pdf_bytes is not None:
+        assert uploaded_sha is not None
         try:
             validate_pdf(uploaded.name, pdf_bytes)
             normalized_instructions = normalize_instruction_rules(instruction_rules)
@@ -522,7 +594,7 @@ def render_generate(db: Database) -> None:
                 )
                 set_id = db.save_question_set(
                     source_filename=Path(uploaded.name).name,
-                    source_sha256=source_sha256(pdf_bytes),
+                    source_sha256=uploaded_sha,
                     mode=mode,
                     model=model,
                     input_mode=input_mode,
@@ -542,7 +614,7 @@ def render_generate(db: Database) -> None:
     last_id = st.session_state.get("last_generated_id")
     if last_id:
         saved = db.get_question_set(last_id)
-        if saved:
+        if saved and uploaded_sha == saved["source_sha256"]:
             render_usage(saved)
             if st.button("Start this test", type="primary"):
                 start_quiz(
@@ -556,6 +628,8 @@ def render_generate(db: Database) -> None:
                         f"{INPUT_MODE_LABELS[saved['input_mode']]}"
                     ),
                 )
+        else:
+            st.session_state.pop("last_generated_id", None)
 
 
 @st.dialog("Delete all previous runs", icon=":material/delete:")
@@ -678,11 +752,11 @@ def render_bookmarks(db: Database) -> None:
                 f"{question['source_filename']} · "
                 f"{QUESTION_TYPE_LABELS[question['question_type']]}"
             )
-            correct_ids = set(question["correct_choice_ids"])
-            for position, choice in enumerate(question["choices"]):
-                marker = " — correct" if choice["id"] in correct_ids else ""
-                st.markdown(f"{chr(ord('A') + position)}. {choice['text']}{marker}")
-            st.info(question["explanation"])
+            render_choice_review(
+                question,
+                selected_ids=None,
+                show_rationales=True,
+            )
             if st.button(
                 "Remove bookmark",
                 key=f"remove_bookmark_{question['id']}",
@@ -703,9 +777,18 @@ if "result" in st.session_state:
     render_result(db)
     st.stop()
 
+if st.session_state.get(NAVIGATION_KEY) not in {
+    "Generate",
+    "Question Sets",
+    "Incorrect Questions",
+    "Bookmarks",
+}:
+    st.session_state[NAVIGATION_KEY] = "Generate"
 page = st.sidebar.radio(
     "Navigation",
     ["Generate", "Question Sets", "Incorrect Questions", "Bookmarks"],
+    key=NAVIGATION_KEY,
+    persist_state="session",
 )
 st.sidebar.divider()
 st.sidebar.caption(f"Local beta {__version__}")
