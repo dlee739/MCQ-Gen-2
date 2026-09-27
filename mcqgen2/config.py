@@ -7,6 +7,7 @@ from typing import Literal
 
 GenerationMode = Literal["high_volume", "high_quality"]
 QuestionType = Literal["mcq", "sata"]
+InputMode = Literal["extracted_text", "pdf"]
 
 
 @dataclass(frozen=True)
@@ -37,19 +38,35 @@ ALLOWED_MODELS = (
     "gpt-5.6-luna",
 )
 
-DEFAULT_MODEL = "gpt-6-luna"
 DEFAULT_MODE: GenerationMode = "high_volume"
+MODE_DEFAULT_MODELS: dict[GenerationMode, str] = {
+    "high_volume": "gpt-6-luna",
+    "high_quality": "gpt-6-sol",
+}
+MODE_DEFAULT_QUESTION_COUNTS: dict[GenerationMode, int] = {
+    "high_volume": 10,
+    "high_quality": 5,
+}
+DEFAULT_MODEL = MODE_DEFAULT_MODELS[DEFAULT_MODE]
 DEFAULT_QUESTION_TYPE: QuestionType = "mcq"
-DEFAULT_QUESTION_COUNT = 20
+DEFAULT_INPUT_MODE: InputMode = "extracted_text"
+DEFAULT_QUESTION_COUNT = MODE_DEFAULT_QUESTION_COUNTS[DEFAULT_MODE]
 MIN_QUESTION_COUNT = 1
 MAX_QUESTION_COUNT = 100
 MAX_PDF_BYTES = 50 * 1024 * 1024
-MAX_CUSTOM_INSTRUCTIONS_CHARS = 2_000
-PROMPT_VERSION = "mcq-v3"
+MAX_INSTRUCTION_RULES_CHARS = 2_000
+# Compatibility alias for older callers and stored data.
+MAX_CUSTOM_INSTRUCTIONS_CHARS = MAX_INSTRUCTION_RULES_CHARS
+PROMPT_VERSION = "mcq-v7"
 
 QUESTION_TYPE_LABELS: dict[QuestionType, str] = {
     "mcq": "MCQ",
     "sata": "SATA",
+}
+
+INPUT_MODE_LABELS: dict[InputMode, str] = {
+    "extracted_text": "Extract text (recommended)",
+    "pdf": "Send original PDF",
 }
 
 

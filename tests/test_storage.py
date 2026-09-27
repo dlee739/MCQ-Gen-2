@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import sqlite3
 
+import pytest
+
 from mcqgen2.generation import GenerationResult
 from mcqgen2.pricing import CostBreakdown, TokenUsage, pricing_snapshot
 from mcqgen2.schemas import GeneratedQuestion
@@ -46,6 +48,7 @@ def test_save_quiz_and_retry_lifecycle(tmp_path) -> None:
         source_sha256="abc123",
         mode="high_volume",
         model="gpt-6-luna",
+        input_mode="extracted_text",
         question_type="mcq",
         custom_instructions="Use real-world scenarios.",
         requested_count=1,
@@ -56,6 +59,7 @@ def test_save_quiz_and_retry_lifecycle(tmp_path) -> None:
     assert saved is not None
     assert saved["usage"]["input_tokens"] == 100
     assert saved["question_type"] == "mcq"
+    assert saved["input_mode"] == "extracted_text"
     assert saved["custom_instructions"] == "Use real-world scenarios."
     assert len(saved["questions"]) == 1
     question_id = saved["questions"][0]["id"]
@@ -87,6 +91,7 @@ def test_sata_uses_exact_set_grading(tmp_path) -> None:
         source_sha256="sata123",
         mode="high_quality",
         model="gpt-6-sol",
+        input_mode="pdf",
         question_type="sata",
         custom_instructions="Use application scenarios.",
         requested_count=1,
@@ -94,6 +99,7 @@ def test_sata_uses_exact_set_grading(tmp_path) -> None:
     )
     saved = db.get_question_set(set_id)
     assert saved is not None
+    assert saved["input_mode"] == "pdf"
     question_id = saved["questions"][0]["id"]
 
     partial = db.record_quiz(
@@ -184,10 +190,125 @@ def test_v1_database_is_migrated_without_losing_quiz_data(tmp_path) -> None:
     saved = db.get_question_set("set1")
     assert saved is not None
     assert saved["question_type"] == "mcq"
+    assert saved["input_mode"] == "pdf"
     assert saved["questions"][0]["correct_choice_ids"] == ["A"]
     assert [item["id"] for item in db.get_retry_questions()] == ["q1"]
 
     verify = sqlite3.connect(path)
-    assert verify.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert verify.execute("PRAGMA user_version").fetchone()[0] == 4
     assert verify.execute("PRAGMA foreign_key_check").fetchall() == []
     verify.close()
+
+
+def test_v2_database_adds_pdf_input_mode_without_losing_data(tmp_path) -> None:
+    path = tmp_path / "v2.sqlite3"
+    db = Database(path)
+    db.initialize()
+    with sqlite3.connect(path) as conn:
+        conn.execute("ALTER TABLE question_sets DROP COLUMN input_mode")
+        conn.execute("PRAGMA user_version = 2")
+
+    db.initialize()
+    with sqlite3.connect(path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(question_sets)")}
+        assert "input_mode" in columns
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_instruction_profiles_are_mode_specific_and_keep_one_default(tmp_path) -> None:
+    db = Database(tmp_path / "profiles.sqlite3")
+    db.initialize()
+
+    volume_default = db.get_default_instruction_profile("high_volume")
+    quality_default = db.get_default_instruction_profile("high_quality")
+    assert volume_default["name"] == "Default"
+    assert quality_default["name"] == "Default"
+    assert volume_default["instructions"] != quality_default["instructions"]
+
+    new_id = db.create_instruction_profile(
+        mode="high_volume", name="Course style", instructions="Use concise scenarios."
+    )
+    db.set_default_instruction_profile(new_id)
+    db.update_instruction_profile(
+        new_id, name="Course style", instructions="Use applied scenarios."
+    )
+    assert db.get_default_instruction_profile("high_volume")["id"] == new_id
+    assert db.get_default_instruction_profile("high_quality")["id"] == quality_default["id"]
+
+    with pytest.raises(ValueError, match="default"):
+        db.delete_instruction_profile(new_id)
+    db.delete_instruction_profile(volume_default["id"])
+    assert [item["name"] for item in db.list_instruction_profiles("high_volume")] == [
+        "Course style"
+    ]
+
+
+def test_bookmarks_practice_and_bulk_cleanup_preserve_profiles(tmp_path) -> None:
+    db = Database(tmp_path / "bookmarks.sqlite3")
+    db.initialize()
+    profile_count = sum(
+        len(db.list_instruction_profiles(mode))
+        for mode in ("high_volume", "high_quality")
+    )
+    set_id = db.save_question_set(
+        source_filename="lecture.pdf",
+        source_sha256="abc123",
+        mode="high_volume",
+        model="gpt-6-luna",
+        input_mode="extracted_text",
+        question_type="mcq",
+        instruction_profile_name="Default",
+        instruction_rules="Use routine questions.",
+        requested_count=1,
+        result=generation_result(),
+    )
+    saved = db.get_question_set(set_id)
+    assert saved is not None
+    question_id = saved["questions"][0]["id"]
+
+    db.set_bookmark(question_id, True)
+    assert db.is_bookmarked(question_id)
+    assert [item["id"] for item in db.get_bookmarked_questions()] == [question_id]
+    assert db.record_quiz(
+        question_ids=[question_id],
+        answers={question_id: ["A"]},
+        kind="bookmarked",
+        question_set_id=None,
+    )["score"] == 1
+
+    counts = db.delete_all_runs()
+    assert counts["question_sets"] == 1
+    assert counts["bookmarks"] == 1
+    assert db.list_question_sets() == []
+    assert db.get_bookmarked_questions() == []
+    assert sum(
+        len(db.list_instruction_profiles(mode))
+        for mode in ("high_volume", "high_quality")
+    ) == profile_count
+
+
+def test_v3_sata_questions_gain_fixed_none_choice(tmp_path) -> None:
+    db = Database(tmp_path / "v3.sqlite3")
+    db.initialize()
+    set_id = db.save_question_set(
+        source_filename="lecture.pdf",
+        source_sha256="sata123",
+        mode="high_volume",
+        model="gpt-6-luna",
+        input_mode="extracted_text",
+        question_type="sata",
+        requested_count=1,
+        result=generation_result(["A"], [1]),
+    )
+    with sqlite3.connect(db.path) as conn:
+        conn.execute("PRAGMA user_version = 3")
+
+    db.initialize()
+    saved = db.get_question_set(set_id)
+    assert saved is not None
+    assert saved["questions"][0]["choices"][-1] == {
+        "id": "E",
+        "text": "None of the above",
+    }
+    assert saved["questions"][0]["correct_choice_ids"] == ["A"]

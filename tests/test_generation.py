@@ -2,34 +2,55 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pymupdf
 import pytest
 
 from mcqgen2.generation import (
     GenerationError,
     generate_question_set,
-    sata_correct_count_plan,
+    randomize_choice_positions,
     validate_pdf,
 )
+from mcqgen2.prompts import SYSTEM_INSTRUCTIONS
+from mcqgen2.schemas import ModelGeneratedQuestion, ModelMCQGeneratedQuestion
 
 
-def question_data(index: int) -> dict:
+def question_data(index: int, correct_count: int = 1) -> dict:
+    choices = [
+        {
+            "text": f"Alpha {index}",
+            "rationale": f"Alpha rationale {index}",
+        },
+        {
+            "text": f"Bravo {index}",
+            "rationale": f"Bravo rationale {index}",
+        },
+        {
+            "text": f"Charlie {index}",
+            "rationale": f"Charlie rationale {index}",
+        },
+        {
+            "text": f"Delta {index}",
+            "rationale": f"Delta rationale {index}",
+        },
+    ]
     return {
         "stem": f"Question {index}?",
-        "choices": [
-            {"id": "A", "text": f"Alpha {index}"},
-            {"id": "B", "text": f"Bravo {index}"},
-            {"id": "C", "text": f"Charlie {index}"},
-            {"id": "D", "text": f"Delta {index}"},
-        ],
-        "correct_choice_ids": ["A"],
-        "explanation": f"Alpha {index} is correct; the other options are not supported.",
+        "correct_choices": choices[:correct_count],
+        "incorrect_choices": choices[correct_count:],
     }
 
 
 class FakeResponses:
-    def __init__(self, *, status: str = "completed") -> None:
+    def __init__(
+        self,
+        *,
+        status: str = "completed",
+        correct_choice_counts: list[int] | None = None,
+    ) -> None:
         self.calls: list[dict] = []
         self.status = status
+        self.correct_choice_counts = correct_choice_counts
 
     def parse(self, **kwargs):
         self.calls.append(kwargs)
@@ -41,13 +62,20 @@ class FakeResponses:
                 output_parsed=None,
                 usage=None,
             )
-        count = response_model.model_json_schema()["properties"]["questions"]["minItems"]
-        parsed = response_model.model_validate(
-            {"questions": [question_data(i) for i in range(count)]}
-        )
+        count = response_model.model_json_schema()["properties"]["questions"][
+            "minItems"
+        ]
+        correct_counts = self.correct_choice_counts or [1] * count
+        questions = [
+            question_data(i, correct_count)
+            for i, correct_count in zip(range(count), correct_counts, strict=True)
+        ]
+        parsed = response_model.model_validate({"questions": questions})
         usage = SimpleNamespace(
             input_tokens=12_000,
-            input_tokens_details=SimpleNamespace(cached_tokens=1_000, cache_write_tokens=0),
+            input_tokens_details=SimpleNamespace(
+                cached_tokens=1_000, cache_write_tokens=0
+            ),
             output_tokens=2_000,
             output_tokens_details=SimpleNamespace(reasoning_tokens=300),
             total_tokens=14_000,
@@ -56,16 +84,89 @@ class FakeResponses:
 
 
 class FakeClient:
-    def __init__(self, *, status: str = "completed") -> None:
-        self.responses = FakeResponses(status=status)
+    def __init__(
+        self,
+        *,
+        status: str = "completed",
+        correct_choice_counts: list[int] | None = None,
+    ) -> None:
+        self.responses = FakeResponses(
+            status=status, correct_choice_counts=correct_choice_counts
+        )
 
 
-def test_generation_is_one_full_pdf_request() -> None:
+class ReverseRng:
+    @staticmethod
+    def shuffle(values) -> None:
+        values.reverse()
+
+
+def text_pdf_bytes(text: str = "Source material for the questions.") -> bytes:
+    document = pymupdf.open()
+    page = document.new_page()
+    page.insert_text((72, 72), text)
+    contents = document.tobytes()
+    document.close()
+    return contents
+
+
+def test_choice_randomization_relabels_positions_and_correct_ids() -> None:
+    sata_data = question_data(1, 2)
+    sata = ModelGeneratedQuestion.model_validate(sata_data)
+
+    randomized_sata = randomize_choice_positions(
+        sata, question_type="sata", rng=ReverseRng()
+    )
+
+    assert [choice.id for choice in randomized_sata.choices] == ["A", "B", "C", "D", "E"]
+    assert [choice.text for choice in randomized_sata.choices] == [
+        "Delta 1",
+        "Charlie 1",
+        "Bravo 1",
+        "Alpha 1",
+        "None of the above",
+    ]
+    assert randomized_sata.correct_choice_ids == ["C", "D"]
+    assert "Alpha 1: Alpha rationale 1." in randomized_sata.explanation
+    assert "None of the above: Incorrect" in randomized_sata.explanation
+
+    mcq = ModelMCQGeneratedQuestion.model_validate(question_data(2))
+    randomized_mcq = randomize_choice_positions(mcq, rng=ReverseRng())
+    assert randomized_mcq.correct_choice_ids == ["D"]
+
+
+def test_answer_key_is_derived_from_bucket_after_shuffling() -> None:
+    question = ModelMCQGeneratedQuestion.model_validate(
+        {
+            "stem": "Which category best fits decreased renal perfusion?",
+            "correct_choices": [
+                {
+                    "text": "Prerenal",
+                    "rationale": "Decreased renal perfusion defines this category",
+                }
+            ],
+            "incorrect_choices": [
+                {"text": "Postrenal", "rationale": "This requires obstruction"},
+                {"text": "Intrinsic", "rationale": "This requires structural damage"},
+                {"text": "Chronic", "rationale": "This does not describe the acute cause"},
+            ],
+        }
+    )
+
+    randomized = randomize_choice_positions(question, rng=ReverseRng())
+
+    assert randomized.choices[3].text == "Prerenal"
+    assert randomized.correct_choice_ids == ["D"]
+    assert "Prerenal: Decreased renal perfusion defines this category." in randomized.explanation
+    assert "C is correct" not in randomized.explanation
+
+
+def test_generation_is_one_full_text_request_by_default() -> None:
     client = FakeClient()
     result = generate_question_set(
         client=client,
         filename="lecture.pdf",
-        pdf_bytes=b"%PDF-1.7\ncontent",
+        pdf_bytes=text_pdf_bytes(),
         model="gpt-6-luna",
         mode="high_volume",
         question_type="mcq",
@@ -76,15 +177,18 @@ def test_generation_is_one_full_pdf_request() -> None:
     assert len(result.questions) == 3
     assert len(client.responses.calls) == 1
     request = client.responses.calls[0]
+    assert request["instructions"] == SYSTEM_INSTRUCTIONS
     assert request["reasoning"] == {"effort": "low"}
     assert request["truncation"] == "disabled"
     assert request["store"] is False
     content = request["input"][0]["content"]
-    assert content[0]["type"] == "input_file"
-    assert content[0]["detail"] == "auto"
-    assert content[0]["file_data"].startswith("data:application/pdf;base64,")
+    assert content[0]["type"] == "input_text"
+    assert "<source_material>" in content[0]["text"]
+    assert "[Page 1]" in content[0]["text"]
+    assert "Source material for the questions." in content[0]["text"]
     assert "exactly 3" in content[1]["text"]
     assert "Use {real-world} scenarios." in content[1]["text"]
+    assert "Never mention or allude to the PDF" in content[1]["text"]
     domain_defaults = ("medi" "cal", "clini" "cal")
     assert all(term not in request["instructions"].casefold() for term in domain_defaults)
     assert all(term not in content[1]["text"].casefold() for term in domain_defaults)
@@ -92,12 +196,32 @@ def test_generation_is_one_full_pdf_request() -> None:
     assert result.sata_correct_counts == []
 
 
-def test_high_quality_uses_high_reasoning() -> None:
+def test_original_pdf_mode_sends_the_pdf_once() -> None:
     client = FakeClient()
     generate_question_set(
         client=client,
         filename="lecture.pdf",
         pdf_bytes=b"%PDF-1.7\ncontent",
+        model="gpt-6-luna",
+        mode="high_volume",
+        question_type="mcq",
+        question_count=1,
+        input_mode="pdf",
+    )
+
+    content = client.responses.calls[0]["input"][0]["content"]
+    assert content[0]["type"] == "input_file"
+    assert content[0]["detail"] == "auto"
+    assert content[0]["file_data"].startswith("data:application/pdf;base64,")
+    assert content[1]["type"] == "input_text"
+
+
+def test_high_quality_uses_high_reasoning_and_stronger_rules() -> None:
+    client = FakeClient()
+    generate_question_set(
+        client=client,
+        filename="lecture.pdf",
+        pdf_bytes=text_pdf_bytes(),
         model="gpt-5.6-terra",
         mode="high_quality",
         question_type="mcq",
@@ -105,7 +229,9 @@ def test_high_quality_uses_high_reasoning() -> None:
     )
     request = client.responses.calls[0]
     assert request["reasoning"] == {"effort": "high"}
-    assert "multi-step" in request["input"][0]["content"][1]["text"]
+    prompt = request["input"][0]["content"][1]["text"]
+    assert "combine at least two" in prompt
+    assert "silently check" in prompt
 
 
 def test_incomplete_generation_is_rejected() -> None:
@@ -113,7 +239,7 @@ def test_incomplete_generation_is_rejected() -> None:
         generate_question_set(
             client=FakeClient(status="incomplete"),
             filename="lecture.pdf",
-            pdf_bytes=b"%PDF-1.7\ncontent",
+            pdf_bytes=text_pdf_bytes(),
             model="gpt-6-sol",
             mode="high_volume",
             question_type="mcq",
@@ -121,29 +247,24 @@ def test_incomplete_generation_is_rejected() -> None:
         )
 
 
-def test_sata_request_includes_weighted_correct_count_plan() -> None:
-    class FixedRng:
-        def choices(self, population, *, weights, k):
-            assert population == [1, 2, 3, 4]
-            assert weights == [10, 40, 40, 10]
-            return [1, 2, 3, 4][:k]
-
-    assert sata_correct_count_plan(4, rng=FixedRng()) == [1, 2, 3, 4]
-
-    client = FakeClient()
+def test_sata_accepts_and_records_zero_through_four_correct_answers() -> None:
+    client = FakeClient(correct_choice_counts=[0, 1, 2, 3, 4])
     result = generate_question_set(
         client=client,
         filename="lecture.pdf",
-        pdf_bytes=b"%PDF-1.7\ncontent",
+        pdf_bytes=text_pdf_bytes(),
         model="gpt-6-luna",
         mode="high_volume",
         question_type="sata",
-        question_count=3,
+        question_count=5,
     )
     prompt = client.responses.calls[0]["input"][0]["content"][1]["text"]
     assert "SATA rules" in prompt
-    assert len(result.sata_correct_counts) == 3
-    assert set(result.sata_correct_counts) <= {1, 2, 3, 4}
+    assert "zero through four objects in correct_choices" in prompt
+    assert "Target these correct-choice counts" not in prompt
+    assert sorted(result.sata_correct_counts) == [0, 1, 2, 3, 4]
+    assert result.questions[0].correct_choice_ids == ["E"]
+    assert result.questions[0].choices[-1].text == "None of the above"
 
 
 def test_custom_instructions_length_is_validated_before_request() -> None:
@@ -152,7 +273,7 @@ def test_custom_instructions_length_is_validated_before_request() -> None:
         generate_question_set(
             client=client,
             filename="lecture.pdf",
-            pdf_bytes=b"%PDF-1.7\ncontent",
+            pdf_bytes=text_pdf_bytes(),
             model="gpt-6-luna",
             mode="high_volume",
             question_type="mcq",
@@ -168,7 +289,7 @@ def test_conflicting_custom_instruction_remains_subordinate() -> None:
     generate_question_set(
         client=client,
         filename="lecture.pdf",
-        pdf_bytes=b"%PDF-1.7\ncontent",
+        pdf_bytes=text_pdf_bytes(),
         model="gpt-6-luna",
         mode="high_volume",
         question_type="mcq",
@@ -180,8 +301,10 @@ def test_conflicting_custom_instruction_remains_subordinate() -> None:
     prompt = request["input"][0]["content"][1]["text"]
     assert "application rules are authoritative" in request["instructions"]
     assert "Create exactly 1 MCQ" in prompt
-    assert "Provide exactly four distinct choices" in prompt
-    assert f"<question_writing_preferences>\n{conflicting}" in prompt
+    assert "Provide exactly four distinct source-based choices" in prompt
+    assert "Do not label choices with letters or numbers" in prompt
+    assert conflicting in prompt
+    assert "question_writing_preferences" not in prompt
 
 
 @pytest.mark.parametrize(
@@ -191,3 +314,19 @@ def test_conflicting_custom_instruction_remains_subordinate() -> None:
 def test_invalid_pdf_is_rejected(filename: str, contents: bytes) -> None:
     with pytest.raises(ValueError):
         validate_pdf(filename, contents)
+
+
+def test_invalid_input_mode_is_rejected_before_request() -> None:
+    client = FakeClient()
+    with pytest.raises(ValueError, match="Unsupported input mode"):
+        generate_question_set(
+            client=client,
+            filename="lecture.pdf",
+            pdf_bytes=text_pdf_bytes(),
+            model="gpt-6-luna",
+            mode="high_volume",
+            question_type="mcq",
+            question_count=1,
+            input_mode="unknown",  # type: ignore[arg-type]
+        )
+    assert client.responses.calls == []
