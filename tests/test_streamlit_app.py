@@ -170,8 +170,8 @@ def test_results_use_per_choice_feedback_and_done_resets_generator(
                 "question_type": "sata",
                 "stem": "Incorrectly answered SATA question?",
                 "choices": [
-                    {"id": "A", "text": "One", "rationale": "One is incorrect."},
-                    {"id": "B", "text": "Two", "rationale": "Two is incorrect."},
+                    {"id": "A", "text": "One", "rationale": "One is an answer."},
+                    {"id": "B", "text": "Two", "rationale": "Two is an answer."},
                     {"id": "C", "text": "Three", "rationale": "Three is incorrect."},
                     {"id": "D", "text": "Four", "rationale": "Four is incorrect."},
                     {
@@ -180,11 +180,11 @@ def test_results_use_per_choice_feedback_and_done_resets_generator(
                         "rationale": "Every supplied choice is incorrect.",
                     },
                 ],
-                "correct_choice_ids": ["E"],
+                "correct_choice_ids": ["A", "B"],
                 "explanation": "Legacy SATA explanation.",
             },
         ],
-        "answers": {"q1": ["A"], "q2": ["A"]},
+        "answers": {"q1": ["A"], "q2": ["B", "D"]},
         "score": 1,
         "total": 2,
         "kind": "full",
@@ -201,15 +201,26 @@ def test_results_use_per_choice_feedback_and_done_resets_generator(
         for element in at.caption
         if isinstance(element.value, str) and element.value.startswith("**Why:**")
     ]
-    assert ":green-badge[Correct]" in markdown
-    assert ":red-badge[Incorrect]" in markdown
-    assert ":blue-badge[Your answer]" in markdown
-    assert "✅ **A.** Alpha :green-badge[Correct] :blue-badge[Your answer]" in markdown
+    assert ":green-badge[Answer]" in markdown
+    assert ":blue-badge[Your choice]" in markdown
+    assert ":green-badge[Correct]" not in markdown
+    assert ":red-badge[Incorrect]" not in markdown
+    assert ":blue-badge[Your answer]" not in markdown
+    assert "✅ **A.** Alpha :green-badge[Answer] :blue-badge[Your choice]" in markdown
     assert "Bravo" not in markdown
-    assert "❌ **A.** One :red-badge[Incorrect] :blue-badge[Your answer]" in markdown
-    assert any(element.value == "**B.** Two" for element in at.markdown)
+    assert "❌ **A.** One :green-badge[Answer]" in markdown
     assert any(
-        element.value == "✅ **E.** None of the above :green-badge[Correct]"
+        element.value
+        == "✅ **B.** Two :green-badge[Answer] :blue-badge[Your choice]"
+        for element in at.markdown
+    )
+    assert any(element.value == "**C.** Three" for element in at.markdown)
+    assert any(
+        element.value == "❌ **D.** Four :blue-badge[Your choice]"
+        for element in at.markdown
+    )
+    assert any(
+        element.value == "**E.** None of the above"
         for element in at.markdown
     )
     assert len(rationales) == 5
@@ -222,6 +233,42 @@ def test_results_use_per_choice_feedback_and_done_resets_generator(
     assert at.selectbox(key="api_model").value == "gpt-6-luna"
     assert at.number_input(key="question_count").value == 15
     assert at.text_area[0].value
+
+
+def test_bookmarks_label_answers_without_response_icons(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("MCQGEN_DATABASE_PATH", str(tmp_path / "app.sqlite3"))
+    question = {
+        "id": "bookmark-q1",
+        "source_filename": "notes.pdf",
+        "question_type": "mcq",
+        "stem": "Which option is the answer?",
+        "choices": [
+            {"id": "A", "text": "Alpha", "rationale": "Alpha is the answer."},
+            {"id": "B", "text": "Bravo", "rationale": "Bravo is not the answer."},
+            {"id": "C", "text": "Charlie", "rationale": "Charlie is not the answer."},
+            {"id": "D", "text": "Delta", "rationale": "Delta is not the answer."},
+        ],
+        "correct_choice_ids": ["A"],
+        "explanation": "Alpha is the answer.",
+    }
+    monkeypatch.setattr(
+        Database,
+        "get_bookmarked_questions",
+        lambda self: [question],
+    )
+    monkeypatch.setattr(Database, "is_bookmarked", lambda self, question_id: True)
+
+    at = AppTest.from_file(APP_PATH, default_timeout=15)
+    at.session_state["navigation"] = "Bookmarks"
+    at.run()
+
+    assert not at.exception
+    markdown = "\n".join(element.value for element in at.markdown)
+    assert "**A.** Alpha :green-badge[Answer]" in markdown
+    assert "**B.** Bravo" in markdown
+    assert "✅" not in markdown
+    assert "❌" not in markdown
+    assert "Your choice" not in markdown
 
 
 def test_quiz_flags_forward_only_navigation_and_final_skip_submission(

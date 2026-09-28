@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from mcqgen2.config import (
     MODE_CONFIGS,
     QUESTION_TYPE_LABELS,
     GenerationMode,
     QuestionType,
 )
+from mcqgen2.schemas import SATA_GROUP_FIELDS
 
 
 # Runtime prompt wording lives here so it can be reviewed and edited without
@@ -68,6 +71,22 @@ High-Quality mode:
 }
 
 
+def _sata_distribution_rules(quotas: Mapping[int, int]) -> str:
+    lines = [
+        "Fixed SATA answer-count distribution (this structural rule overrides editable instructions):"
+    ]
+    for correct_count, field_name in SATA_GROUP_FIELDS.items():
+        quota = quotas[correct_count]
+        question_label = "question" if quota == 1 else "questions"
+        lines.append(
+            f"- {field_name}: return exactly {quota} {question_label}, each with exactly "
+            f"{correct_count} objects in correct_choices and {4 - correct_count} objects "
+            "in incorrect_choices."
+        )
+    lines.append("Do not move a question into a group with a different answer count.")
+    return "\n".join(lines)
+
+
 def build_generation_prompt(
     *,
     question_count: int,
@@ -75,12 +94,27 @@ def build_generation_prompt(
     question_type: QuestionType,
     instruction_rules: str | None = None,
     custom_instructions: str | None = None,
+    sata_correct_count_quotas: Mapping[int, int] | None = None,
 ) -> str:
     """Assemble the editable prompt blocks for one generation request."""
     if mode not in MODE_CONFIGS:
         raise ValueError(f"Unsupported generation mode: {mode}")
     if question_type not in QUESTION_TYPE_LABELS:
         raise ValueError(f"Unsupported question type: {question_type}")
+    if question_type == "sata":
+        if sata_correct_count_quotas is None:
+            raise ValueError("SATA prompts require correct-count quotas")
+        if set(sata_correct_count_quotas) != set(SATA_GROUP_FIELDS):
+            raise ValueError("SATA quotas must contain counts zero through four")
+        if any(
+            type(value) is not int or value < 0
+            for value in sata_correct_count_quotas.values()
+        ):
+            raise ValueError("SATA quotas must be non-negative integers")
+        if sum(sata_correct_count_quotas.values()) != question_count:
+            raise ValueError("SATA quotas must total question_count")
+    elif sata_correct_count_quotas is not None:
+        raise ValueError("MCQ prompts do not use SATA correct-count quotas")
     if custom_instructions is not None:
         if instruction_rules:
             raise ValueError("Pass instruction_rules, not both instruction arguments.")
@@ -90,10 +124,11 @@ def build_generation_prompt(
         question_count=question_count,
         question_type_label=QUESTION_TYPE_LABELS[question_type],
     )
-    return "\n\n".join(
-        (
-            shared,
-            QUESTION_TYPE_RULES[question_type],
-            instruction_rules or MODE_RULES[mode],
-        )
-    )
+    blocks = [
+        shared,
+        QUESTION_TYPE_RULES[question_type],
+        instruction_rules or MODE_RULES[mode],
+    ]
+    if sata_correct_count_quotas is not None:
+        blocks.append(_sata_distribution_rules(sata_correct_count_quotas))
+    return "\n\n".join(blocks)

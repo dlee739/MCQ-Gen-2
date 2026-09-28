@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import Counter
+import random
 from types import SimpleNamespace
 
 import pymupdf
@@ -9,10 +11,15 @@ from mcqgen2.generation import (
     GenerationError,
     generate_question_set,
     randomize_choice_positions,
+    sata_correct_count_quotas,
     validate_pdf,
 )
 from mcqgen2.prompts import SYSTEM_INSTRUCTIONS
-from mcqgen2.schemas import ModelGeneratedQuestion, ModelMCQGeneratedQuestion
+from mcqgen2.schemas import (
+    SATA_GROUP_FIELDS,
+    ModelGeneratedQuestion,
+    ModelMCQGeneratedQuestion,
+)
 
 
 def question_data(index: int, correct_count: int = 1) -> dict:
@@ -42,15 +49,9 @@ def question_data(index: int, correct_count: int = 1) -> dict:
 
 
 class FakeResponses:
-    def __init__(
-        self,
-        *,
-        status: str = "completed",
-        correct_choice_counts: list[int] | None = None,
-    ) -> None:
+    def __init__(self, *, status: str = "completed") -> None:
         self.calls: list[dict] = []
         self.status = status
-        self.correct_choice_counts = correct_choice_counts
 
     def parse(self, **kwargs):
         self.calls.append(kwargs)
@@ -62,15 +63,23 @@ class FakeResponses:
                 output_parsed=None,
                 usage=None,
             )
-        count = response_model.model_json_schema()["properties"]["questions"][
-            "minItems"
-        ]
-        correct_counts = self.correct_choice_counts or [1] * count
-        questions = [
-            question_data(i, correct_count)
-            for i, correct_count in zip(range(count), correct_counts, strict=True)
-        ]
-        parsed = response_model.model_validate({"questions": questions})
+        properties = response_model.model_json_schema()["properties"]
+        if "questions" in properties:
+            count = properties["questions"]["minItems"]
+            payload = {
+                "questions": [question_data(index) for index in range(count)]
+            }
+        else:
+            payload = {}
+            index = 0
+            for correct_count, field_name in SATA_GROUP_FIELDS.items():
+                count = properties[field_name]["minItems"]
+                payload[field_name] = [
+                    question_data(question_index, correct_count)
+                    for question_index in range(index, index + count)
+                ]
+                index += count
+        parsed = response_model.model_validate(payload)
         usage = SimpleNamespace(
             input_tokens=12_000,
             input_tokens_details=SimpleNamespace(
@@ -84,15 +93,8 @@ class FakeResponses:
 
 
 class FakeClient:
-    def __init__(
-        self,
-        *,
-        status: str = "completed",
-        correct_choice_counts: list[int] | None = None,
-    ) -> None:
-        self.responses = FakeResponses(
-            status=status, correct_choice_counts=correct_choice_counts
-        )
+    def __init__(self, *, status: str = "completed") -> None:
+        self.responses = FakeResponses(status=status)
 
 
 class ReverseRng:
@@ -133,6 +135,14 @@ def test_choice_randomization_relabels_positions_and_correct_ids() -> None:
     )
     assert "Alpha 1: Alpha rationale 1." in randomized_sata.explanation
     assert "None of the above: Incorrect" in randomized_sata.explanation
+
+    zero_correct = randomize_choice_positions(
+        ModelGeneratedQuestion.model_validate(question_data(3, 0)),
+        question_type="sata",
+        rng=ReverseRng(),
+    )
+    assert zero_correct.correct_choice_ids == ["E"]
+    assert zero_correct.choices[-1].text == "None of the above"
 
     mcq = ModelMCQGeneratedQuestion.model_validate(question_data(2))
     randomized_mcq = randomize_choice_positions(mcq, rng=ReverseRng())
@@ -256,8 +266,8 @@ def test_incomplete_generation_is_rejected() -> None:
         )
 
 
-def test_sata_accepts_and_records_zero_through_four_correct_answers() -> None:
-    client = FakeClient(correct_choice_counts=[0, 1, 2, 3, 4])
+def test_sata_uses_center_weighted_schema_in_one_request() -> None:
+    client = FakeClient()
     result = generate_question_set(
         client=client,
         filename="lecture.pdf",
@@ -265,15 +275,42 @@ def test_sata_accepts_and_records_zero_through_four_correct_answers() -> None:
         model="gpt-6-luna",
         mode="high_volume",
         question_type="sata",
-        question_count=5,
+        question_count=20,
     )
     prompt = client.responses.calls[0]["input"][0]["content"][1]["text"]
     assert "SATA rules" in prompt
     assert "zero through four objects in correct_choices" in prompt
-    assert "Target these correct-choice counts" not in prompt
-    assert sorted(result.sata_correct_counts) == [0, 1, 2, 3, 4]
-    assert result.questions[0].correct_choice_ids == ["E"]
-    assert result.questions[0].choices[-1].text == "None of the above"
+    assert "Fixed SATA answer-count distribution" in prompt
+    assert "zero_correct_questions: return exactly 1 question" in prompt
+    assert "two_correct_questions: return exactly 8 questions" in prompt
+    assert Counter(result.sata_correct_counts) == {0: 1, 1: 4, 2: 8, 3: 6, 4: 1}
+    assert len(client.responses.calls) == 1
+    zero_correct = next(
+        question for question in result.questions if question.correct_choice_ids == ["E"]
+    )
+    assert zero_correct.choices[-1].text == "None of the above"
+
+
+@pytest.mark.parametrize("question_count", [1, 5, 10, 15, 20, 100])
+def test_sata_quotas_sum_to_requested_count(question_count: int) -> None:
+    quotas = sata_correct_count_quotas(
+        question_count,
+        rng=random.Random(question_count),
+    )
+
+    assert set(quotas) == set(range(5))
+    assert sum(quotas.values()) == question_count
+    assert all(value >= 0 for value in quotas.values())
+
+
+def test_sata_quotas_use_selected_weighting_at_full_percent_scale() -> None:
+    assert sata_correct_count_quotas(100, rng=random.Random(1)) == {
+        0: 5,
+        1: 20,
+        2: 40,
+        3: 30,
+        4: 5,
+    }
 
 
 def test_custom_instructions_length_is_validated_before_request() -> None:

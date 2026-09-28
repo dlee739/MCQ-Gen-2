@@ -32,11 +32,19 @@ from mcqgen2.pricing import (
     pricing_snapshot,
     usage_from_response,
 )
-from mcqgen2.schemas import GeneratedQuestion, ModelGeneratedQuestion, question_bank_model
+from mcqgen2.schemas import (
+    GeneratedQuestion,
+    ModelGeneratedQuestion,
+    model_questions_from_bank,
+    question_bank_model,
+)
 
 
 class GenerationError(RuntimeError):
     """Raised when a generation request cannot produce a complete question set."""
+
+
+SATA_CORRECT_COUNT_WEIGHTS = {0: 5, 1: 20, 2: 40, 3: 30, 4: 5}
 
 
 @dataclass(frozen=True)
@@ -57,6 +65,36 @@ def validate_pdf(filename: str, pdf_bytes: bytes) -> None:
         raise ValueError("The PDF exceeds the 50 MB API file-input limit.")
     if not pdf_bytes.startswith(b"%PDF-"):
         raise ValueError("The uploaded file does not appear to be a valid PDF.")
+
+
+def sata_correct_count_quotas(
+    question_count: int,
+    *,
+    rng: random.Random | None = None,
+) -> dict[int, int]:
+    """Apportion a center-weighted SATA mix across zero through four answers."""
+    if question_count < 1:
+        raise ValueError("question_count must be positive")
+
+    scaled = {
+        correct_count: question_count * weight
+        for correct_count, weight in SATA_CORRECT_COUNT_WEIGHTS.items()
+    }
+    quotas = {
+        correct_count: weighted_count // 100
+        for correct_count, weighted_count in scaled.items()
+    }
+    remaining = question_count - sum(quotas.values())
+    tie_order = list(SATA_CORRECT_COUNT_WEIGHTS)
+    (rng if rng is not None else random).shuffle(tie_order)
+    ranked = sorted(
+        tie_order,
+        key=lambda correct_count: scaled[correct_count] % 100,
+        reverse=True,
+    )
+    for correct_count in ranked[:remaining]:
+        quotas[correct_count] += 1
+    return quotas
 
 
 def source_sha256(pdf_bytes: bytes) -> str:
@@ -200,12 +238,22 @@ def generate_question_set(
         instruction_rules = custom_instructions
     instruction_rules = normalize_instruction_rules(instruction_rules)
     safe_filename = Path(filename).name
-    response_model = question_bank_model(question_count, question_type)
+    sata_quotas = (
+        sata_correct_count_quotas(question_count)
+        if question_type == "sata"
+        else None
+    )
+    response_model = question_bank_model(
+        question_count,
+        question_type,
+        sata_quotas=sata_quotas,
+    )
     prompt = build_generation_prompt(
         question_count=question_count,
         mode=mode,
         question_type=question_type,
         instruction_rules=instruction_rules,
+        sata_correct_count_quotas=sata_quotas,
     )
     content = _request_content(
         filename=safe_filename,
@@ -243,9 +291,12 @@ def generate_question_set(
     if parsed is None:
         raise GenerationError("The model returned no parsed question bank.")
 
+    model_questions = model_questions_from_bank(parsed, question_type)
+    if question_type == "sata":
+        random.shuffle(model_questions)
     questions = [
         randomize_choice_positions(question, question_type=question_type)
-        for question in parsed.questions
+        for question in model_questions
     ]
     if len(questions) != question_count:
         raise GenerationError(

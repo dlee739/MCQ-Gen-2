@@ -16,6 +16,11 @@ def test_generation_prompt_assembles_every_mode_and_type(
         mode=mode,  # type: ignore[arg-type]
         question_type=question_type,  # type: ignore[arg-type]
         instruction_rules="Use concise scenarios.",
+        sata_correct_count_quotas=(
+            {0: 0, 1: 2, 2: 3, 3: 2, 4: 1}
+            if question_type == "sata"
+            else None
+        ),
     )
 
     assert f"Create exactly 8 {question_type.upper()} questions" in prompt
@@ -27,6 +32,13 @@ def test_generation_prompt_assembles_every_mode_and_type(
     assert "Every question must be answerable from the source material" not in prompt
     assert "Use concise scenarios." in prompt
     assert "question_writing_preferences" not in prompt
+    if question_type == "sata":
+        assert "Fixed SATA answer-count distribution" in prompt
+        assert prompt.index("Use concise scenarios.") < prompt.index(
+            "Fixed SATA answer-count distribution"
+        )
+    else:
+        assert "Fixed SATA answer-count distribution" not in prompt
 
 
 def test_generation_prompt_handles_no_custom_instructions() -> None:

@@ -144,3 +144,36 @@ def test_results_pdf_marks_flagged_and_skipped_questions() -> None:
     assert "Flagged: 1" in text
     assert "Skipped: 1" in text
     assert "Question 1 (Incorrect; Flagged; Skipped)" in text
+
+
+def test_results_pdf_uses_answer_and_choice_labels_for_sata_review() -> None:
+    question = {
+        "id": "q1",
+        "stem": "Which options apply?",
+        "choices": [
+            {"id": "A", "text": "Missed answer", "rationale": "A rationale."},
+            {"id": "B", "text": "Selected answer", "rationale": "B rationale."},
+            {"id": "C", "text": "Unselected distractor", "rationale": "C rationale."},
+            {"id": "D", "text": "Selected distractor", "rationale": "D rationale."},
+            {"id": "E", "text": "None of the above", "rationale": "E rationale."},
+        ],
+        "correct_choice_ids": ["A", "B"],
+        "explanation": "Legacy explanation.",
+    }
+    result = build_results_pdf(
+        title="Test results",
+        questions=[question],
+        answers={"q1": ["B", "D"]},
+        score=0,
+        total=1,
+    )
+    with pymupdf.open(stream=result, filetype="pdf") as document:
+        text = "\n".join(page.get_text() for page in document)
+
+    assert text.count("Answer") == 2
+    assert text.count("Your choice") == 2
+    assert "A. Missed answer Answer" in text
+    assert "B. Selected answer Answer Your choice" in text
+    assert "C. Unselected distractor" in text
+    assert "D. Selected distractor Your choice" in text
+    assert "E. None of the above" in text

@@ -138,22 +138,21 @@ def render_choice_review(
         if compact_correct and choice_id not in correct_ids:
             continue
         letter = chr(ord("A") + position)
-        if choice_id in correct_ids:
+        is_answer = choice_id in correct_ids
+        is_selected = selected_ids is not None and choice_id in selected_ids
+        if selected_ids is not None and is_answer and is_selected:
             icon = "✅"
-            status = ":green-badge[Correct]"
-        elif selected_ids is not None and choice_id in selected_ids:
+        elif selected_ids is not None and is_answer != is_selected:
             icon = "❌"
-            status = ":red-badge[Incorrect]"
         else:
             icon = ""
-            status = ""
-        selected = (
-            " :blue-badge[Your answer]"
-            if selected_ids is not None and choice_id in selected_ids
-            else ""
-        )
+        tags: list[str] = []
+        if is_answer:
+            tags.append(":green-badge[Answer]")
+        if is_selected:
+            tags.append(":blue-badge[Your choice]")
         prefix = f"{icon} " if icon else ""
-        suffix = f" {status}{selected}" if status or selected else ""
+        suffix = " " + " ".join(tags) if tags else ""
         st.markdown(f"{prefix}**{letter}.** {choice['text']}{suffix}")
         if rationales is not None:
             st.caption(f"**Why:** {rationales[choice_id]}")

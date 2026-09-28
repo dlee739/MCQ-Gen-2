@@ -84,7 +84,8 @@ option. It never switches to the more expensive input mode silently.
 - **MCQ** questions have exactly one correct answer.
 - **SATA** (Select All That Apply) questions may have zero to four correct source choices
   and are graded by exact-set matching. Every SATA question includes a fixed fifth option,
-  **None of the above**, which is correct only when none of A–D is correct.
+  **None of the above**, which is correct only when none of A–D is correct. Each generated
+  set uses a center-weighted answer-count mix rather than repeating the same count throughout.
 - Each generation mode has its own library of editable instruction profiles. The selected
   rules can be edited for the current request, saved over the profile, saved as a new profile,
   or made the default for that mode. Fixed source-grounding and response-structure rules are

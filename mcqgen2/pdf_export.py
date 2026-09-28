@@ -8,9 +8,40 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
-from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+from reportlab.graphics.shapes import Drawing, Line, Rect
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from mcqgen2.explanations import choice_rationales
+
+
+def _response_marker(*, is_answer: bool, is_selected: bool) -> Drawing | None:
+    if not is_answer and not is_selected:
+        return None
+
+    color = (
+        colors.HexColor("#188038")
+        if is_answer and is_selected
+        else colors.HexColor("#D93025")
+    )
+    marker = Drawing(12, 12)
+    marker.add(
+        Rect(
+            0.5,
+            0.5,
+            11,
+            11,
+            strokeColor=color,
+            fillColor=None,
+            strokeWidth=1,
+        )
+    )
+    if is_answer and is_selected:
+        marker.add(Line(2.5, 6, 5, 3.5, strokeColor=color, strokeWidth=1.8))
+        marker.add(Line(5, 3.5, 10, 9, strokeColor=color, strokeWidth=1.8))
+    else:
+        marker.add(Line(3, 3, 9, 9, strokeColor=color, strokeWidth=1.8))
+        marker.add(Line(3, 9, 9, 3, strokeColor=color, strokeWidth=1.8))
+    return marker
 
 
 def build_results_pdf(
@@ -84,18 +115,42 @@ def build_results_pdf(
         rationales = choice_rationales(question)
         for index, choice in enumerate(question["choices"]):
             display_letter = chr(ord("A") + index)
-            markers: list[str] = []
-            if choice["id"] in selected_ids:
-                markers.append("selected")
-            if choice["id"] in correct_ids:
-                markers.append("correct")
-            suffix = f" ({', '.join(markers)})" if markers else ""
-            story.append(
-                Paragraph(
-                    f"{display_letter}. {escape(str(choice['text']))}{escape(suffix)}",
-                    styles["BodyText"],
+            is_answer = choice["id"] in correct_ids
+            is_selected = choice["id"] in selected_ids
+            labels: list[str] = []
+            if is_answer:
+                labels.append('<font color="#188038"><b>Answer</b></font>')
+            if is_selected:
+                labels.append('<font color="#1A73E8"><b>Your choice</b></font>')
+            suffix = " " + " ".join(labels) if labels else ""
+            marker = _response_marker(is_answer=is_answer, is_selected=is_selected)
+            choice_row = Table(
+                [
+                    [
+                        marker or Spacer(12, 12),
+                        Paragraph(
+                            f"<b>{display_letter}.</b> "
+                            f"{escape(str(choice['text']))}{suffix}",
+                            styles["BodyText"],
+                        ),
+                    ]
+                ],
+                colWidths=[16, document.width - 16],
+                hAlign="LEFT",
+            )
+            choice_row.setStyle(
+                TableStyle(
+                    [
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+                        ("RIGHTPADDING", (0, 0), (0, 0), 4),
+                        ("RIGHTPADDING", (1, 0), (1, 0), 0),
+                        ("TOPPADDING", (0, 0), (-1, -1), 0),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+                    ]
                 )
             )
+            story.append(choice_row)
             if rationales is not None:
                 story.append(
                     Paragraph(
