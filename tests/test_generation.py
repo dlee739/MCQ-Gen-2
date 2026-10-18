@@ -241,12 +241,13 @@ def test_high_quality_uses_high_reasoning_and_stronger_rules() -> None:
         client=client,
         filename="lecture.pdf",
         pdf_bytes=text_pdf_bytes(),
-        model="gpt-5.6-terra",
+        model="gpt-6.1-sol",
         mode="high_quality",
         question_type="mcq",
         question_count=1,
     )
     request = client.responses.calls[0]
+    assert request["model"] == "gpt-6.1-sol"
     assert request["reasoning"] == {"effort": "high"}
     prompt = request["input"][0]["content"][1]["text"]
     assert "combine at least two" in prompt

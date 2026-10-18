@@ -22,6 +22,8 @@ def test_generate_page_exposes_input_type_and_instruction_controls(
     assert at.segmented_control[1].value == "mcq"
     assert at.selectbox(key="generation_mode").value == "high_volume"
     assert at.selectbox(key="api_model").value == "gpt-6-luna"
+    assert "gpt-6.1-sol" in at.selectbox(key="api_model").options
+    assert "gpt-6-sol" in at.selectbox(key="api_model").options
     assert at.number_input(key="question_count").value == 15
     assert at.button[0].label == "Generate questions"
     assert at.selectbox[2].label == "Instruction profile"
@@ -45,7 +47,7 @@ def test_generation_mode_updates_defaults_and_preserves_manual_overrides(
 
     at.selectbox(key="generation_mode").select("high_quality").run()
     assert not at.exception
-    assert at.selectbox(key="api_model").value == "gpt-6-sol"
+    assert at.selectbox(key="api_model").value == "gpt-6.1-sol"
     assert at.number_input(key="question_count").value == 5
 
     at.selectbox(key="api_model").select("gpt-5.6-terra").run()

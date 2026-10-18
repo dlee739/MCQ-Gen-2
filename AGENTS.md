@@ -7,6 +7,7 @@ These decisions are intentional and should be preserved unless the user explicit
 - Extracting the complete PDF text is the default input path. Users may explicitly choose direct PDF input when page visuals matter.
 - High-Volume is the default mode and its current question quality is considered successful. Avoid adding complexity without a concrete need.
 - High-Quality should improve reasoning and distractor quality within the original generation request.
+- High-Quality defaults to `gpt-6.1-sol`; keep `gpt-6-sol` selectable and keep High-Volume defaulting to `gpt-6-luna`.
 - Do not add an LLM reviewer, grader, semantic quality pass, or automatic paid retry without explicit user approval.
 - SATA questions may intentionally have zero, one, two, three, or all four source choices correct. Grade them by exact-set matching.
 - New SATA sets enforce a center-weighted 5/20/40/30/5 distribution across zero through four correct source choices within the same one-shot response.

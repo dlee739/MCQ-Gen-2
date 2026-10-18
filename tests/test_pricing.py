@@ -7,13 +7,41 @@ from mcqgen2.pricing import MODEL_PRICING, TokenUsage, calculate_cost, pricing_r
 
 def test_all_requested_models_have_pricing() -> None:
     assert set(MODEL_PRICING) == {
+        "gpt-6.1-sol",
         "gpt-6-sol",
         "gpt-6-luna",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-5.6-luna",
     }
-    assert len(pricing_rows()) == 5
+    assert len(pricing_rows()) == 6
+
+
+@pytest.mark.parametrize(
+    ("input_tokens", "expected_tier", "expected_total"),
+    [
+        (100_000, "short", 0.667),
+        (300_000, "long", 1.884),
+    ],
+)
+def test_gpt_6_1_sol_costs_use_verified_context_rates(
+    input_tokens: int,
+    expected_tier: str,
+    expected_total: float,
+) -> None:
+    usage = TokenUsage(
+        input_tokens=input_tokens,
+        cached_input_tokens=20_000,
+        cache_write_tokens=10_000,
+        output_tokens=50_000,
+        reasoning_tokens=0,
+        total_tokens=input_tokens + 50_000,
+    )
+
+    cost = calculate_cost("gpt-6.1-sol", usage)
+
+    assert cost.tier == expected_tier
+    assert cost.total_cost == pytest.approx(expected_total)
 
 
 def test_cost_uses_each_usage_category() -> None:

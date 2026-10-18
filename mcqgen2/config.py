@@ -31,6 +31,7 @@ MODE_CONFIGS: dict[GenerationMode, ModeConfig] = {
 }
 
 ALLOWED_MODELS = (
+    "gpt-6.1-sol",
     "gpt-6-sol",
     "gpt-6-luna",
     "gpt-5.6-sol",
@@ -41,7 +42,7 @@ ALLOWED_MODELS = (
 DEFAULT_MODE: GenerationMode = "high_volume"
 MODE_DEFAULT_MODELS: dict[GenerationMode, str] = {
     "high_volume": "gpt-6-luna",
-    "high_quality": "gpt-6-sol",
+    "high_quality": "gpt-6.1-sol",
 }
 MODE_DEFAULT_QUESTION_COUNTS: dict[GenerationMode, int] = {
     "high_volume": 15,

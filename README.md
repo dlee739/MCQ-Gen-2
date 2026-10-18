@@ -12,7 +12,7 @@ A focused local application for generating and practicing source-grounded questi
 - Generates exactly 1–100 MCQ or SATA questions using Structured Outputs.
 - Provides High-Volume and High-Quality generation modes.
 - Provides editable, reusable instruction profiles with a separate default for each mode.
-- Supports `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`.
+- Supports `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`. High-Quality defaults to `gpt-6.1-sol`; High-Volume remains on `gpt-6-luna`.
 - Records actual input/output token usage and estimates cost from a dated pricing snapshot.
 - Saves question sets and quiz attempts locally in SQLite.
 - Runs forward-only practice tests with per-test flags and explicit skipped questions.
@@ -104,7 +104,7 @@ Automated tests use a fake OpenAI client and do not make paid API calls.
 
 ## Pricing note
 
-The built-in pricing table was verified on 2026-09-25 against the [official OpenAI pricing page](https://developers.openai.com/api/docs/pricing). Costs shown by the app are estimates based on API-reported token usage and the stored pricing snapshot, not invoices. Update `mcqgen2/pricing.py` when OpenAI pricing changes.
+The built-in pricing table was verified on 2026-10-17 against the [official OpenAI pricing page](https://developers.openai.com/api/docs/pricing). Costs shown by the app are estimates based on API-reported token usage and the stored pricing snapshot, not invoices. Update `mcqgen2/pricing.py` when OpenAI pricing changes.
 
 ## Beta limitations and bug reports
 

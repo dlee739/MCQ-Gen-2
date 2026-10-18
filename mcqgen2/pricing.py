@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
-PRICING_VERIFIED_AT = "2026-09-25"
+PRICING_VERIFIED_AT = "2026-10-17"
 LONG_CONTEXT_THRESHOLD = 272_000
 PRICING_SOURCE = "https://developers.openai.com/api/docs/pricing"
 
@@ -24,6 +24,10 @@ class ModelPricing:
 
 
 MODEL_PRICING: dict[str, ModelPricing] = {
+    "gpt-6.1-sol": ModelPricing(
+        short=TokenRates(2.00, 0.10, 2.50, 10.00),
+        long=TokenRates(4.00, 0.20, 5.00, 15.00),
+    ),
     "gpt-6-sol": ModelPricing(
         short=TokenRates(2.00, 0.20, 2.50, 10.00),
         long=TokenRates(4.00, 0.40, 5.00, 15.00),
