@@ -630,6 +630,7 @@ def render_generate(db: Database) -> None:
             max_value=MAX_QUESTION_COUNT,
             step=1,
             key=QUESTION_COUNT_KEY,
+            on_change="ignore",
             persist_state="session",
         )
 
