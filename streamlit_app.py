@@ -57,6 +57,7 @@ QUESTION_COUNT_KEY = "question_count"
 INPUT_MODE_KEY = "input_mode"
 QUESTION_TYPE_KEY = "question_type"
 NAVIGATION_KEY = "navigation"
+BOOKMARK_TABLE_REVISION_KEY = "bookmark_table_revision"
 
 
 @st.cache_resource
@@ -106,8 +107,15 @@ def prepare_questions(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return prepared
 
 
+def reset_bookmark_table_selection() -> None:
+    st.session_state[BOOKMARK_TABLE_REVISION_KEY] = (
+        st.session_state.get(BOOKMARK_TABLE_REVISION_KEY, 0) + 1
+    )
+
+
 def toggle_bookmark(db: Database, question_id: str) -> None:
     db.set_bookmark(question_id, not db.is_bookmarked(question_id))
+    reset_bookmark_table_selection()
     st.rerun()
 
 
@@ -801,10 +809,38 @@ def render_incorrect(db: Database) -> None:
         )
 
 
+@st.dialog("Remove bookmarks", icon=":material/bookmark_remove:")
+def remove_bookmarks_dialog(
+    db: Database,
+    *,
+    question_ids: list[str] | None,
+    bookmark_count: int,
+) -> None:
+    clear_all = question_ids is None
+    target = "all bookmarks" if clear_all else f"{bookmark_count} selected bookmarks"
+    st.warning(
+        f"Remove {target}? The generated questions and test history will be kept."
+    )
+    confirm_label = "Clear bookmarks" if clear_all else "Remove bookmarks"
+    if st.button(confirm_label, type="primary", icon=":material/delete:"):
+        removed = (
+            db.clear_bookmarks()
+            if clear_all
+            else db.remove_bookmarks(question_ids or [])
+        )
+        st.session_state.bookmarks_removed = removed
+        reset_bookmark_table_selection()
+        st.rerun()
+
+
 def render_bookmarks(db: Database) -> None:
     st.header("Bookmarks")
     questions = db.get_bookmarked_questions()
     st.metric("Saved questions", len(questions))
+    removed = st.session_state.pop("bookmarks_removed", None)
+    if removed is not None:
+        label = "bookmark" if removed == 1 else "bookmarks"
+        st.success(f"Removed {removed} {label}.")
     if not questions:
         st.info("Bookmark a question during a test or while reviewing results.")
         return
@@ -819,6 +855,50 @@ def render_bookmarks(db: Database) -> None:
             metadata="Mixed bookmarked set" if len(sources) > 1 else sources[0],
         )
 
+    st.subheader("Manage bookmarks")
+    st.caption("Select one or more rows, then remove them together.")
+    table_rows = [
+        {
+            "Question": question["stem"],
+            "Source": question["source_filename"],
+            "Type": QUESTION_TYPE_LABELS[question["question_type"]],
+        }
+        for question in questions
+    ]
+    revision = st.session_state.get(BOOKMARK_TABLE_REVISION_KEY, 0)
+    selection = st.dataframe(
+        table_rows,
+        key=f"bookmark_management_{revision}",
+        on_select="rerun",
+        selection_mode="multi-row",
+        hide_index=True,
+        width="stretch",
+    )
+    selected_ids = [
+        questions[index]["id"]
+        for index in selection.selection.rows
+        if 0 <= index < len(questions)
+    ]
+    with st.container(horizontal=True):
+        if st.button(
+            f"Remove selected ({len(selected_ids)})",
+            disabled=not selected_ids,
+            icon=":material/bookmark_remove:",
+        ):
+            remove_bookmarks_dialog(
+                db,
+                question_ids=selected_ids,
+                bookmark_count=len(selected_ids),
+            )
+        if st.button("Clear all bookmarks", icon=":material/delete:"):
+            remove_bookmarks_dialog(
+                db,
+                question_ids=None,
+                bookmark_count=len(questions),
+            )
+
+    st.divider()
+    st.subheader("Saved questions")
     for number, question in enumerate(questions, start=1):
         with st.expander(f"{number}. {question['stem']}"):
             st.caption(

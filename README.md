@@ -17,7 +17,7 @@ A focused local application for generating and practicing source-grounded questi
 - Saves question sets and quiz attempts locally in SQLite.
 - Runs forward-only practice tests with per-test flags and explicit skipped questions.
 - Tracks incorrect questions until they are answered correctly on a later attempt.
-- Supports persistent bookmarks, including mixed bookmarked-question practice.
+- Supports persistent bookmarks, mixed bookmarked-question practice, and confirmed bulk bookmark removal.
 - Can delete all generated runs and bookmarks while preserving instruction profiles.
 - Exports test results to PDF.
 

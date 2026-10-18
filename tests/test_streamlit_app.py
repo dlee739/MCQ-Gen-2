@@ -237,13 +237,12 @@ def test_results_use_per_choice_feedback_and_done_resets_generator(
     assert at.text_area[0].value
 
 
-def test_bookmarks_label_answers_without_response_icons(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("MCQGEN_DATABASE_PATH", str(tmp_path / "app.sqlite3"))
-    question = {
-        "id": "bookmark-q1",
+def _bookmarked_question(question_id: str, stem: str) -> dict:
+    return {
+        "id": question_id,
         "source_filename": "notes.pdf",
         "question_type": "mcq",
-        "stem": "Which option is the answer?",
+        "stem": stem,
         "choices": [
             {"id": "A", "text": "Alpha", "rationale": "Alpha is the answer."},
             {"id": "B", "text": "Bravo", "rationale": "Bravo is not the answer."},
@@ -253,6 +252,11 @@ def test_bookmarks_label_answers_without_response_icons(tmp_path, monkeypatch) -
         "correct_choice_ids": ["A"],
         "explanation": "Alpha is the answer.",
     }
+
+
+def test_bookmarks_label_answers_without_response_icons(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("MCQGEN_DATABASE_PATH", str(tmp_path / "app.sqlite3"))
+    question = _bookmarked_question("bookmark-q1", "Which option is the answer?")
     monkeypatch.setattr(
         Database,
         "get_bookmarked_questions",
@@ -265,12 +269,63 @@ def test_bookmarks_label_answers_without_response_icons(tmp_path, monkeypatch) -
     at.run()
 
     assert not at.exception
+    assert list(at.dataframe[0].value.columns) == ["Question", "Source", "Type"]
+    assert at.dataframe[0].value.iloc[0]["Question"] == question["stem"]
+    remove_selected = next(
+        button for button in at.button if button.label == "Remove selected (0)"
+    )
+    assert remove_selected.disabled
+    assert any(button.label == "Clear all bookmarks" for button in at.button)
+
+    at.session_state["bookmark_management_0"] = {"selection": {"rows": [0]}}
+    at.run()
+    remove_selected = next(
+        button for button in at.button if button.label == "Remove selected (1)"
+    )
+    assert not remove_selected.disabled
+
     markdown = "\n".join(element.value for element in at.markdown)
     assert "**A.** Alpha :green-badge[Answer]" in markdown
     assert "**B.** Bravo" in markdown
     assert "✅" not in markdown
     assert "❌" not in markdown
     assert "Your choice" not in markdown
+
+
+def test_clear_all_bookmarks_requires_confirmation_and_refreshes(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("MCQGEN_DATABASE_PATH", str(tmp_path / "app.sqlite3"))
+    questions = [
+        _bookmarked_question("bookmark-q1", "First saved question?"),
+        _bookmarked_question("bookmark-q2", "Second saved question?"),
+    ]
+
+    monkeypatch.setattr(
+        Database,
+        "get_bookmarked_questions",
+        lambda self: list(questions),
+    )
+
+    at = AppTest.from_file(APP_PATH, default_timeout=15)
+    at.session_state["navigation"] = "Bookmarks"
+    at.run()
+
+    next(
+        button for button in at.button if button.label == "Clear all bookmarks"
+    ).click().run()
+    assert not at.exception
+    assert any("generated questions and test history" in item.value for item in at.warning)
+    assert any(button.label == "Clear bookmarks" for button in at.button)
+
+    questions.clear()
+    at.session_state["bookmarks_removed"] = 2
+    at.run()
+    assert any(item.value == "Removed 2 bookmarks." for item in at.success)
+    assert any(
+        item.value == "Bookmark a question during a test or while reviewing results."
+        for item in at.info
+    )
 
 
 def test_quiz_flags_forward_only_navigation_and_final_skip_submission(

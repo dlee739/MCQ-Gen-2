@@ -588,6 +588,24 @@ class Database:
             else:
                 conn.execute("DELETE FROM bookmarks WHERE question_id = ?", (question_id,))
 
+    def remove_bookmarks(self, question_ids: Sequence[str]) -> int:
+        unique_ids = list(dict.fromkeys(question_ids))
+        if not unique_ids:
+            return 0
+        with self._connect() as conn:
+            changes_before = conn.total_changes
+            conn.executemany(
+                "DELETE FROM bookmarks WHERE question_id = ?",
+                ((question_id,) for question_id in unique_ids),
+            )
+            return conn.total_changes - changes_before
+
+    def clear_bookmarks(self) -> int:
+        with self._connect() as conn:
+            changes_before = conn.total_changes
+            conn.execute("DELETE FROM bookmarks")
+            return conn.total_changes - changes_before
+
     def get_bookmarked_questions(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(

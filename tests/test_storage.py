@@ -334,6 +334,60 @@ def test_bookmarks_practice_and_bulk_cleanup_preserve_profiles(tmp_path) -> None
     ) == profile_count
 
 
+def test_selective_and_clear_bookmark_removal_preserve_saved_data(tmp_path) -> None:
+    db_path = tmp_path / "bulk-bookmarks.sqlite3"
+    db = Database(db_path)
+    db.initialize()
+    profile_count = sum(
+        len(db.list_instruction_profiles(mode))
+        for mode in ("high_volume", "high_quality")
+    )
+    set_ids: list[str] = []
+    question_ids: list[str] = []
+    for index in range(3):
+        set_id = db.save_question_set(
+            source_filename=f"source-{index}.pdf",
+            source_sha256=f"hash-{index}",
+            mode="high_volume",
+            model="gpt-6-luna",
+            input_mode="extracted_text",
+            question_type="mcq",
+            requested_count=1,
+            result=generation_result(),
+        )
+        saved = db.get_question_set(set_id)
+        assert saved is not None
+        set_ids.append(set_id)
+        question_ids.append(saved["questions"][0]["id"])
+
+    for question_id in question_ids:
+        db.set_bookmark(question_id, True)
+    db.record_quiz(
+        question_ids=[question_ids[0]],
+        answers={question_ids[0]: ["A"]},
+        kind="full",
+        question_set_id=set_ids[0],
+    )
+
+    assert db.remove_bookmarks([]) == 0
+    assert db.remove_bookmarks([question_ids[0], question_ids[0], "unknown-id"]) == 1
+    assert {item["id"] for item in db.get_bookmarked_questions()} == set(
+        question_ids[1:]
+    )
+    assert db.clear_bookmarks() == 2
+    assert db.clear_bookmarks() == 0
+    assert db.get_bookmarked_questions() == []
+    assert all(db.get_question_set(set_id) is not None for set_id in set_ids)
+    assert len(db.list_question_sets()) == 3
+    assert sum(
+        len(db.list_instruction_profiles(mode))
+        for mode in ("high_volume", "high_quality")
+    ) == profile_count
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM quiz_sessions").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM attempts").fetchone()[0] == 1
+
+
 def test_v3_sata_questions_gain_fixed_none_choice(tmp_path) -> None:
     db = Database(tmp_path / "v3.sqlite3")
     db.initialize()
